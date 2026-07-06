@@ -2,10 +2,8 @@
 venv/
 .venv/
 
-# Secrets — ne JAMAIS commit
+# Secrets — ne JAMAIS commit (le template .env.example, lui, est committé)
 .env
-.env.example est volontairement ignoré ? NON, on le commit (template)
-# → on commit bien .env.example (template), jamais .env
 
 # Base de données locale
 instance/
