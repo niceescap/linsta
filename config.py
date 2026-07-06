@@ -6,10 +6,22 @@ load_dotenv()  # charge les variables depuis .env s'il existe
 # ─────────────────────────────────────────────
 # FLASK
 # ─────────────────────────────────────────────
-SECRET_KEY = os.environ.get("LIQUID_SECRET_KEY", "change-moi-en-prod")
 FLASK_HOST = "0.0.0.0"
 FLASK_PORT = 5050
-FLASK_DEBUG = False
+FLASK_DEBUG = os.environ.get("FLASK_DEBUG", "0").lower() in ("1", "true")
+
+# ─────────────────────────────────────────────
+# SECRET KEY — OBLIGATOIRE en production
+# ─────────────────────────────────────────────
+SECRET_KEY = os.environ.get("LIQUID_SECRET_KEY")
+if not SECRET_KEY:
+    # Placeholder acceptable uniquement en dev local (debug actif).
+    SECRET_KEY = "dev-insecure-secret-change-me"
+    if not FLASK_DEBUG:
+        raise RuntimeError(
+            "LIQUID_SECRET_KEY non défini en production — expose un secret par défaut. "
+            "Ajoute LIQUID_SECRET_KEY dans ton .env (ignoré par Git)."
+        )
 
 # ─────────────────────────────────────────────
 # DATABASE
