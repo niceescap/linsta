@@ -1,0 +1,25 @@
+# Environnement virtuel
+venv/
+.venv/
+
+# Secrets — ne JAMAIS commit
+.env
+.env.example est volontairement ignoré ? NON, on le commit (template)
+# → on commit bien .env.example (template), jamais .env
+
+# Base de données locale
+instance/
+*.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+logs/
+*.log
+
+# Éditeurs
+.vscode/
+*.swp
