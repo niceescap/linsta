@@ -1,0 +1,24 @@
+# Environnement virtuel
+venv/
+.venv/
+
+# Secrets — ne JAMAIS commit
+.env
+
+# Base de données locale
+instance/
+*.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+logs/
+*.log
+
+# Éditeurs
+.vscode/
+*.swp
+
