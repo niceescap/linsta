@@ -1,4 +1,0 @@
-# ⚠️  FICHIER OBSOLÈTE — ne sert plus à rien, à supprimer.
-# Git ne lit QUE « .gitignore » (avec le point). Celui-ci est ignoré par Git.
-# Suppression manuelle recommandée depuis ton terminal :
-#     git rm gitignore && git commit -m "retire gitignore obsolète (doublon de .gitignore)"
