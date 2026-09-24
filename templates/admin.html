@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Admin — Linsta Radio</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="{{ url_for('static', filename='radio-logo.png') }}">
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 60rem; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { display: flex; align-items: center; gap: 0.75rem; }
+    h1 img { height: 2.5rem; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    .pending  { border-left: 4px solid #d08a00; }
+    .approved { border-left: 4px solid #0a7d00; }
+    .rejected { border-left: 4px solid #b00; }
+    .row { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+    .meta { flex: 1; min-width: 16rem; }
+    .meta h3 { margin: 0 0 0.25rem 0; }
+    .muted { color: #666; font-size: 0.85rem; }
+    audio { width: 100%; margin: 0.5rem 0; }
+    button { padding: 0.4rem 0.9rem; border-radius: 6px; border: none; font-size: 0.95rem; cursor: pointer; color: #fff; }
+    .btn-ok  { background: #0a7d00; }
+    .btn-no  { background: #b00; }
+    .btn-ok:hover { background: #0c9a00; }
+    .btn-no:hover { background: #d00; }
+    .reason-input { padding: 0.4rem; border: 1px solid #ccc; border-radius: 6px; width: 14rem; }
+    .ok  { color: #0a7d00; }
+    .err { color: #b00; }
+    .tabs a { margin-right: 1rem; text-decoration: none; color: #444; }
+    .tabs a.active { font-weight: bold; color: #000; }
+    code { background: #f3f3f3; padding: 0.1rem 0.3rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>
+    <img src="{{ url_for('static', filename='radio-logo.png') }}" alt="">
+    Admin — Linsta Radio
+  </h1>
+  <p class="muted">
+    Connecté : <strong>{{ user.display_name }}</strong> — <a href="/">retour à l'accueil</a>
+  </p>
+
+  {% if message %}<p class="ok">{{ message }}</p>{% endif %}
+  {% if error %}<p class="err">{{ error }}</p>{% endif %}
+
+  <p class="tabs">
+    <a href="/admin" class="{% if not filter %}active{% endif %}">Tous</a>
+    <a href="/admin?status=pending"  class="{% if filter=='pending'  %}active{% endif %}">En attente</a>
+    <a href="/admin?status=approved" class="{% if filter=='approved' %}active{% endif %}">Validés</a>
+    <a href="/admin?status=rejected" class="{% if filter=='rejected' %}active{% endif %}">Rejetés</a>
+  </p>
+
+  {% if not tracks %}
+    <p class="muted">Aucun track.</p>
+  {% endif %}
+
+  {% for t in tracks %}
+    <div class="card {{ t.status }}">
+      <div class="row">
+        <img src="/media/cover/{{ t.id }}" alt=""
+             style="width:72px;height:72px;object-fit:cover;border-radius:6px;background:#eee;flex-shrink:0"
+             onerror="this.src='/static/radio-logo.png'">
+        <div class="meta">
+          <h3>{{ t.title }}</h3>
+          <p class="muted">
+            {{ t.artist or '—' }} ·
+            genre <code>{{ t.genre_label or '?' }}</code> ·
+            {{ '%.0f'|format(t.duration_seconds or 0) }} s ·
+            uploadé par {{ t.uploader_name or t.uploader_email or '?' }} ·
+            statut <code>{{ t.status }}</code>
+            {% if t.source_url %}· <a href="{{ t.source_url }}" target="_blank" rel="noopener">source</a>{% endif %}
+            {% if t.rejection_reason %}· <em>motif : {{ t.rejection_reason }}</em>{% endif %}
+            {% if t.reviewed_at %}· revu le {{ t.reviewed_at }}{% endif %}
+          </p>
+        </div>
+      </div>
+
+      <audio controls preload="none" src="/media/{{ t.id }}"></audio>
+
+      <div class="row">
+        {% if t.status == 'pending' %}
+          <form method="post" action="/admin/tracks/{{ t.id }}/approve">
+            <button type="submit" class="btn-ok">Valider</button>
+          </form>
+          <form method="post" action="/admin/tracks/{{ t.id }}/reject">
+            <input type="text" name="reason" placeholder="motif (optionnel)" class="reason-input">
+            <button type="submit" class="btn-no">Rejeter</button>
+          </form>
+        {% elif t.status == 'approved' %}
+          <form method="post" action="/admin/tracks/{{ t.id }}/reject"
+                onsubmit="return confirm('Rejeter ce morceau ? Il ne sera plus diffusé.')">
+            <input type="text" name="reason" placeholder="motif (optionnel)" class="reason-input">
+            <button type="submit" class="btn-no">Rejeter</button>
+          </form>
+        {% elif t.status == 'rejected' %}
+          <form method="post" action="/admin/tracks/{{ t.id }}/reintegrate">
+            <button type="submit" class="btn-ok">Réintégrer</button>
+          </form>
+          <form method="post" action="/admin/tracks/{{ t.id }}/delete"
+                onsubmit="return confirm('Supprimer DÉFINITIVEMENT ce morceau ?\nFichier audio et image seront effacés du disque. Cette action est irréversible.')">
+            <button type="submit" class="btn-no">Supprimer définitivement</button>
+          </form>
+        {% endif %}
+
+        {% if t.source_url and t.status != 'rejected' %}
+          <form method="post" action="/admin/tracks/{{ t.id }}/refetch-cover">
+            <button type="submit" style="background:#444">🔄 Image</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  {% endfor %}
+</body>
+</html>

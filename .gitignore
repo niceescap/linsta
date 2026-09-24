@@ -1,0 +1,29 @@
+
+!storage/hls/.gitkeep
+!storage/meta/.gitkeep
+!storage/tracks/.gitkeep
+# Base de données locale
+# Environnement virtuel
+# Logs
+# Python
+# Secrets — ne JAMAIS commit (le template .env.example, lui, est committé)
+# instance
+# storage runtime
+# Éditeurs
+*.db
+*.log
+*.pyc
+*.pyo
+*.swp
+.env
+.venv/
+.vscode/
+__pycache__/
+instance/
+instance/*.db
+instance/*.db.bak*
+logs/
+storage/hls/*
+storage/meta/*
+storage/tracks/*
+venv/
