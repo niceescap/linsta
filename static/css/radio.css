@@ -1,0 +1,31 @@
+:root{
+  --bg:#0B0B0B;
+  --bg-soft:#121212;
+  --gold:#D9A441;
+  --orange:#E07A2F;
+  --text:#F5F1E8;
+  --muted:#9F9A8F;
+  --border:rgba(217,164,65,.2);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.page{max-width:960px;margin:0 auto;padding:24px}
+.brand{text-align:center;margin-bottom:32px}
+.brand-logo{height:64px}
+.player-card{background:var(--bg-soft);border:1px solid var(--border);border-radius:18px;padding:24px;position:relative;overflow:hidden}
+.cover{width:100%;aspect-ratio:1/1;max-width:420px;margin:0 auto;border-radius:16px;background:#111;border:1px solid var(--border);object-fit:cover;display:block}
+.meta{text-align:center;margin-top:16px}
+.live{display:inline-flex;align-items:center;gap:8px;color:var(--orange);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:.85rem}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--orange);box-shadow:0 0 12px var(--orange);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.title{margin:12px 0 4px;font-size:1.4rem;letter-spacing:.02em}
+.artist{color:var(--muted);margin-bottom:8px}
+.badge{display:inline-block;margin-top:8px;padding:4px 10px;border:1px solid var(--gold);color:var(--gold);border-radius:999px;font-size:.75rem;letter-spacing:.08em}
+.controls{display:flex;align-items:center;justify-content:center;gap:24px;margin:24px 0}
+.play-btn{width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--orange));border:none;color:#0B0B0B;font-size:28px;cursor:pointer}
+.progress{margin:12px auto;max-width:600px}
+.progress-bar{height:4px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden}
+.progress-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--gold),var(--orange))}
+.volume{display:flex;align-items:center;gap:8px;margin-top:12px;justify-content:center;color:var(--muted)}
+.volume input{width:120px}
+@media(min-width:768px){.title{font-size:1.8rem}}
