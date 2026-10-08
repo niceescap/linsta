@@ -267,9 +267,10 @@ def run():
                 if track is None:
                     write_state(message="aucun titre diffusable — silence")
                     engine.silence(1)
-                    # Recheck the catalogue periodically; avoid retrying broken files every second.
-                    if len(excluded) > 0:
-                        time.sleep(1)
+                    # Recheck excluded files periodically: do not spin on a bad catalogue.
+                    if excluded:
+                        engine.silence(4)
+                        excluded.clear()
                     continue
                 path = os.path.join(STORAGE_PATH, track["file_path"])
                 if not os.path.isfile(path):
