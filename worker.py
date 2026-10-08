@@ -90,7 +90,7 @@ def start_encoder():
         "-i", "pipe:0", "-c:a", "aac", "-b:a", "128k",
         "-ar", str(RATE), "-ac", str(CHANNELS),
         "-f", "hls", "-hls_time", str(SEGMENT_DURATION),
-        "-hls_start_number_source", "epoch_us",
+        "-hls_start_number_source", "epoch",
         "-hls_list_size", "6", "-hls_flags", "delete_segments+omit_endlist+temp_file",
         "-hls_segment_filename", os.path.join(HLS_PATH, "seg_%09d.ts"), PLAYLIST,
     ]
