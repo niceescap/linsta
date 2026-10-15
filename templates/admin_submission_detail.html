@@ -1,0 +1,53 @@
+{% extends "admin_submissions.html" %}
+{% block title %}Revue de la proposition{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('submission_review.queue') }}">Retour à la file</a></p>
+<h1>Proposition {{ proposal.id }} — {{ proposal.title or 'Sans titre' }}</h1>
+<p class="status">{{ status_labels[proposal.status] }}</p>
+<p>Contributeur : {{ proposal.contributor_id }}</p>
+{% if proposal.reviewed_at %}<p>Décision URL : {{ proposal.reviewed_at }} · administrateur {{ proposal.reviewed_by }}</p>{% endif %}
+{% if proposal.rejection_reason %}<p>Motif du refus : {{ proposal.rejection_reason }}</p>{% endif %}
+{% if proposal.status == 'approved_awaiting_audio' %}<p>Source acceptée. Le dépôt MP3 sera ouvert lors d’une étape ultérieure. Cette proposition n’est pas diffusable.</p>{% endif %}
+{% if proposal.duplicates %}
+<section><h2>Avertissement de doublons</h2><p>Cette source a aussi été proposée par un autre contributeur. Cet avertissement ne bloque pas la décision.</p>
+<ul>{% for duplicate in proposal.duplicates %}<li><a href="{{ url_for('submission_review.show', submission_id=duplicate.id) }}">Proposition {{ duplicate.id }}</a> · contributeur {{ duplicate.contributor_id }} · {{ status_labels[duplicate.status] }}</li>{% endfor %}</ul></section>
+{% endif %}
+<section><h2>Métadonnées fournisseur</h2>
+<p>{{ metadata_labels.get(proposal.metadata_status, 'État indisponible') }}</p>
+{% if proposal.metadata_error_code %}<p>{{ metadata_error_messages.get(proposal.metadata_error_code, 'Récupération indisponible.') }}</p>{% endif %}
+<dl>
+<dt>Plateforme</dt><dd>{{ proposal.platform }}</dd>
+<dt>Identifiant fournisseur</dt><dd>{{ proposal.source_id }}</dd>
+<dt>Lien source</dt><dd>{% if source_link %}<a href="{{ source_link }}" target="_blank" rel="noopener noreferrer">{{ proposal.source_url }}</a>{% else %}{{ proposal.source_url }}{% endif %}</dd>
+<dt>Titre fournisseur</dt><dd>{{ proposal.source_title or 'Non disponible' }}</dd>
+<dt>Artiste fournisseur</dt><dd>{{ proposal.artist_name or 'Non disponible' }}</dd>
+<dt>Chaîne</dt><dd>{{ proposal.channel_name or 'Non disponible' }} — la chaîne ne détermine pas l’artiste.</dd>
+<dt>Durée fournisseur</dt><dd>{% if proposal.source_duration_seconds is not none %}{{ proposal.source_duration_seconds }} secondes{% else %}Non disponible{% endif %}</dd>
+<dt>Album</dt><dd>{{ proposal.source_album or 'Non disponible' }}</dd>
+<dt>Publication</dt><dd>{{ proposal.publication_date or 'Non disponible' }}</dd>
+{% if proposal.youtube_view_count is not none %}<dt>Vues YouTube</dt><dd>{{ proposal.youtube_view_count }}</dd>{% endif %}
+{% if artwork_link %}<dt>Pochette / miniature</dt><dd><a href="{{ artwork_link }}" target="_blank" rel="noopener noreferrer">Voir chez le fournisseur</a></dd>{% endif %}
+<dt>Description</dt><dd>{{ proposal.source_description or 'Non disponible' }}</dd>
+</dl></section>
+<section><h2>Champs éditoriaux</h2>
+{% if proposal.status == 'pending_review' %}
+{% set values = form_values if form_values is not none else proposal %}
+<form method="post" action="{{ url_for('submission_review.editorial', submission_id=proposal.id) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>Titre <input name="title" value="{{ values.get('title') or '' }}" required></label>
+<label>Artiste <input name="artist" value="{{ values.get('artist') or '' }}" required></label>
+<label>Genre <select name="genre_id" required><option value="">— choisir —</option>
+{% for genre in genres %}<option value="{{ genre.id }}" {% if values.get('genre_id')|string == genre.id|string %}selected{% endif %}>{{ genre.label }}</option>{% endfor %}</select></label>
+<button type="submit">Enregistrer les corrections</button></form>
+<p>Enregistrez les corrections avant de prendre une décision.</p>
+<form method="post" action="{{ url_for('submission_review.accept', submission_id=proposal.id) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Accepter la proposition URL</button></form>
+<form method="post" action="{{ url_for('submission_review.reject', submission_id=proposal.id) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>Motif du refus <input name="reason" required></label><button type="submit">Refuser la proposition</button></form>
+{% else %}
+<dl><dt>Titre</dt><dd>{{ proposal.title or 'Non disponible' }}</dd><dt>Artiste</dt><dd>{{ proposal.artist or 'Non disponible' }}</dd><dt>Genre</dt><dd>{% for genre in genres %}{% if genre.id == proposal.genre_id %}{{ genre.label }}{% endif %}{% endfor %}</dd></dl>
+<p>Aucune décision URL n’est disponible à cette étape.</p>
+{% endif %}
+</section>
+{% endblock %}

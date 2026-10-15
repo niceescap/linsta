@@ -1,0 +1,74 @@
+{% extends "submissions.html" %}
+{% block title %}Ma proposition{% endblock %}
+{% block content %}
+<h1>{{ proposal.title or proposal.source_title or 'Ma proposition' }}</h1>
+<p class="status">{{ status_labels.get(proposal.status, 'État indisponible') }}</p>
+{% if proposal.rejection_reason %}<p>Motif du refus : {{ proposal.rejection_reason }}</p>{% endif %}
+{% if proposal.status == 'approved_awaiting_audio' %}<p>Votre proposition a été acceptée. Le dépôt MP3 sera proposé lors de l’ouverture de l’étape audio.</p>{% endif %}
+{% if proposal.status == 'rejected' %}<p>Cette proposition est clôturée. Vous pouvez créer une nouvelle proposition.</p>{% endif %}
+<section>
+  <h2>Métadonnées de la source</h2>
+  <p>{{ metadata_labels.get(proposal.metadata_status, 'État indisponible') }}</p>
+  {% if proposal.metadata_error_code %}<p role="status">{{ metadata_error_messages.get(proposal.metadata_error_code, 'La récupération est indisponible. Vous pouvez compléter les champs manuellement.') }}</p>{% endif %}
+  <dl>
+    <dt>Plateforme</dt><dd>{{ 'YouTube' if proposal.platform == 'youtube' else 'Spotify' }}</dd>
+    <dt>Lien original</dt><dd>{% if source_link %}<a href="{{ source_link }}" target="_blank" rel="noopener noreferrer">{{ proposal.source_url }}</a>{% else %}{{ proposal.source_url }}{% endif %}</dd>
+    <dt>Titre fournisseur</dt><dd>{{ proposal.source_title or 'Non disponible' }}</dd>
+    <dt>Artiste fournisseur</dt><dd>{{ proposal.artist_name or 'Non disponible' }}</dd>
+    {% if proposal.channel_name %}<dt>Chaîne YouTube</dt><dd>{{ proposal.channel_name }} — le nom de chaîne ne détermine pas le nom d’artiste.</dd>{% endif %}
+    <dt>Durée fournisseur</dt><dd>{% if proposal.source_duration_seconds is not none %}{{ proposal.source_duration_seconds }} secondes{% else %}Non disponible{% endif %}</dd>
+    {% if proposal.source_album %}<dt>Album</dt><dd>{{ proposal.source_album }}</dd>{% endif %}
+    {% if proposal.publication_date %}<dt>Publication</dt><dd>{{ proposal.publication_date }}</dd>{% endif %}
+    {% if proposal.youtube_view_count is not none %}<dt>Vues YouTube</dt><dd>{{ proposal.youtube_view_count }}</dd>{% endif %}
+    {% if artwork_link %}<dt>Pochette / miniature</dt><dd><a href="{{ artwork_link }}" target="_blank" rel="noopener noreferrer">Voir l’image chez le fournisseur</a></dd>{% endif %}
+    {% if proposal.source_description %}<dt>Description</dt><dd>{{ proposal.source_description }}</dd>{% endif %}
+  </dl>
+  {% if proposal.status in ('draft', 'pending_review') %}
+  <form method="post" action="{{ url_for('contributions.refresh', submission_id=proposal.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit">Réessayer la récupération</button>
+  </form>
+  {% endif %}
+</section>
+<section>
+  <h2>Informations pour la validation</h2>
+  {% if proposal.status == 'draft' %}
+  <p>Vérifiez le titre et l’artiste, puis choisissez un genre. Les suggestions ne remplacent jamais vos corrections automatiquement.</p>
+  {% set values = form_values if form_values is not none else proposal %}
+  <form method="post" action="{{ url_for('contributions.editorial', submission_id=proposal.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Titre <input id="editorial-title" type="text" name="title" value="{{ values.get('title') or '' }}" required></label>
+    {% if proposal.editorial_suggestions.title %}<p>Suggestion : {{ proposal.editorial_suggestions.title }} <button type="button" data-field="editorial-title" data-suggestion="{{ proposal.editorial_suggestions.title }}">Utiliser ce titre</button></p>{% endif %}
+    <label>Artiste <input id="editorial-artist" type="text" name="artist" value="{{ values.get('artist') or '' }}" required></label>
+    {% if proposal.editorial_suggestions.artist %}<p>Suggestion : {{ proposal.editorial_suggestions.artist }} <button type="button" data-field="editorial-artist" data-suggestion="{{ proposal.editorial_suggestions.artist }}">Utiliser cet artiste</button></p>{% endif %}
+    <label>Genre
+      <select name="genre_id" required>
+        <option value="">— choisir —</option>
+        {% for genre in genres %}<option value="{{ genre.id }}" {% if values.get('genre_id')|string == genre.id|string %}selected{% endif %}>{{ genre.label }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit">Enregistrer mes informations</button>
+  </form>
+  <p>Après enregistrement, envoyez votre proposition pour validation.</p>
+  <form method="post" action="{{ url_for('contributions.submit', submission_id=proposal.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" {% if not (proposal.title and proposal.artist and proposal.genre_id) %}disabled{% endif %}>Envoyer pour validation</button>
+  </form>
+  {% else %}
+  <dl><dt>Titre</dt><dd>{{ proposal.title or 'Non disponible' }}</dd><dt>Artiste</dt><dd>{{ proposal.artist or 'Non disponible' }}</dd><dt>Genre</dt><dd>{% for genre in genres %}{% if genre.id == proposal.genre_id %}{{ genre.label }}{% endif %}{% endfor %}</dd></dl>
+  <p>Les informations éditoriales ne sont plus modifiables à cette étape.</p>
+  {% endif %}
+</section>
+{% if history %}
+<section><h2>Historique de récupération</h2><ol>
+  {% for attempt in history %}<li>{{ attempt.started_at }} — {{ metadata_labels.get(attempt.status, 'État indisponible') }}{% if attempt.error_code %} : {{ metadata_error_messages.get(attempt.error_code, 'Récupération indisponible.') }}{% endif %}</li>{% endfor %}
+</ol></section>
+{% endif %}
+<script>
+  document.querySelectorAll('button[data-suggestion]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      document.getElementById(button.dataset.field).value = button.dataset.suggestion;
+    });
+  });
+</script>
+{% endblock %}

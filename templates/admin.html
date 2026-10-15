@@ -40,6 +40,7 @@
     Connecté : <strong>{{ user.display_name }}</strong> — <a href="/">retour à l'accueil</a>
   </p>
 
+  <p><a href="{{ url_for('submission_review.queue') }}">Propositions URL — file de validation</a></p>
   {% if message %}<p class="ok">{{ message }}</p>{% endif %}
   {% if error %}<p class="err">{{ error }}</p>{% endif %}
 
@@ -80,30 +81,36 @@
       <div class="row">
         {% if t.status == 'pending' %}
           <form method="post" action="/admin/tracks/{{ t.id }}/approve">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn-ok">Valider</button>
           </form>
           <form method="post" action="/admin/tracks/{{ t.id }}/reject">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="text" name="reason" placeholder="motif (optionnel)" class="reason-input">
             <button type="submit" class="btn-no">Rejeter</button>
           </form>
         {% elif t.status == 'approved' %}
           <form method="post" action="/admin/tracks/{{ t.id }}/reject"
                 onsubmit="return confirm('Rejeter ce morceau ? Il ne sera plus diffusé.')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="text" name="reason" placeholder="motif (optionnel)" class="reason-input">
             <button type="submit" class="btn-no">Rejeter</button>
           </form>
         {% elif t.status == 'rejected' %}
           <form method="post" action="/admin/tracks/{{ t.id }}/reintegrate">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn-ok">Réintégrer</button>
           </form>
           <form method="post" action="/admin/tracks/{{ t.id }}/delete"
                 onsubmit="return confirm('Supprimer DÉFINITIVEMENT ce morceau ?\nFichier audio et image seront effacés du disque. Cette action est irréversible.')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn-no">Supprimer définitivement</button>
           </form>
         {% endif %}
 
         {% if t.source_url and t.status != 'rejected' %}
           <form method="post" action="/admin/tracks/{{ t.id }}/refetch-cover">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" style="background:#444">🔄 Image</button>
           </form>
         {% endif %}

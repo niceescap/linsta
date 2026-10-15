@@ -344,8 +344,11 @@
         </p>
 
         <form method="post" action="/logout-form" style="margin-bottom:1.5rem">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit">Se déconnecter</button>
         </form>
+
+        <p><a href="{{ url_for('contributions.dashboard') }}"><strong>Mes propositions — soumettre un lien YouTube ou Spotify</strong></a></p>
 
         {% if message %}<p class="ok">{{ message }}</p>{% endif %}
         {% if error %}<p class="err">{{ error }}</p>{% endif %}
@@ -357,6 +360,7 @@
         </p>
 
         <form method="post" action="/tracks" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <p>
             <label>Fichier MP3
               <input type="file" name="file" accept="audio/mpeg,.mp3" required>

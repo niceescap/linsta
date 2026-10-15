@@ -3,8 +3,9 @@ from datetime import timedelta
 from functools import wraps
 
 from authlib.integrations.flask_client import OAuth
+from authlib.integrations.base_client.errors import OAuthError
 from flask import (Flask, request, jsonify, session, redirect, url_for,
-                   render_template, send_file)
+                   render_template, send_file, g)
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from config import (
@@ -13,6 +14,7 @@ from config import (
     SESSION_LIFETIME_DAYS,
 )
 from db import get_db
+from web_security import init_web_security, clear_login_session
 from email_utils import (
     generate_verification_token,
     confirm_verification_token,
@@ -30,6 +32,7 @@ app.config.update(
     SESSION_COOKIE_SECURE=not FLASK_DEBUG,
     PERMANENT_SESSION_LIFETIME=timedelta(days=SESSION_LIFETIME_DAYS),
 )
+init_web_security(app, lambda: get_db())
 
 # Derrière nginx : faire confiance aux en-têtes X-Forwarded-* pour que
 # url_for(_external=True) génère les bonnes URLs (https://fgl.servemp3.com).
@@ -63,7 +66,9 @@ ADMIN_EMAILS = {
 def login_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if "user_id" not in session:
+        if g.current_user is None:
+            if g.account_unverified:
+                return jsonify({"error": "compte non validé"}), 403
             return jsonify({"error": "non connecté"}), 401
         return f(*args, **kwargs)
     return wrapper
@@ -72,12 +77,20 @@ def login_required(f):
 def admin_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if "user_id" not in session:
+        if g.current_user is None:
+            if g.account_unverified:
+                return jsonify({"error": "compte non validé"}), 403
             return jsonify({"error": "non connecté"}), 401
-        if session.get("role") != "admin":
+        if g.current_user['role'] != "admin":
             return jsonify({"error": "admin requis"}), 403
         return f(*args, **kwargs)
     return wrapper
+
+
+from submission_routes import create_submission_blueprint
+app.register_blueprint(create_submission_blueprint(lambda: get_db(), login_required))
+from submission_review_routes import create_submission_review_blueprint
+app.register_blueprint(create_submission_review_blueprint(lambda: get_db(), admin_required))
 
 
 # ─────────────────────────────────────────────
@@ -86,13 +99,7 @@ def admin_required(f):
 
 @app.route("/", methods=["GET"])
 def index():
-    user = None
-    if "user_id" in session:
-        user = {
-            "id": session["user_id"],
-            "display_name": session.get("display_name"),
-            "role": session.get("role"),
-        }
+    user = g.current_user
     db = get_db()
     genres = db.execute("SELECT id, label FROM genres ORDER BY sort").fetchall()
     db.close()
@@ -107,7 +114,7 @@ def index():
 
 @app.route("/logout-form", methods=["POST"])
 def logout_form():
-    session.clear()
+    clear_login_session()
     return redirect("/")
 
 
@@ -199,6 +206,7 @@ def login():
     if not user["is_verified"]:
         return jsonify({"error": "compte non validé, vérifie ta boîte mail"}), 403
 
+    clear_login_session()
     session.permanent = True
     session["user_id"] = user["id"]
     session["display_name"] = user["display_name"]
@@ -216,7 +224,7 @@ def login():
 
 @app.route("/logout", methods=["POST"])
 def logout():
-    session.clear()
+    clear_login_session()
     return jsonify({"ok": True})
 
 
@@ -242,14 +250,18 @@ def login_google():
 
 @app.route("/auth/callback")
 def auth_google_callback():
-    token = google.authorize_access_token()
+    try:
+        # Authlib must consume and validate OAuth state before any account write.
+        token = google.authorize_access_token()
+    except OAuthError:
+        return jsonify({"error": "réponse OAuth invalide"}), 400
     userinfo = token.get("userinfo") or google.userinfo()
 
     email = (userinfo.get("email") or "").strip().lower()
     google_id = userinfo.get("sub")
     display_name = (userinfo.get("name") or email).strip()
 
-    if not email or not google_id:
+    if not email or not google_id or userinfo.get('email_verified') is not True:
         return jsonify({"error": "réponse Google incomplète"}), 400
 
     db = get_db()
@@ -286,6 +298,7 @@ def auth_google_callback():
 
     db.close()
 
+    clear_login_session()
     session.permanent = True
     session["user_id"] = user_id
     session["display_name"] = display_name
