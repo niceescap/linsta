@@ -79,6 +79,9 @@
       <audio controls preload="none" src="/media/{{ t.id }}"></audio>
 
       <div class="row">
+        {% if t.submission_id %}
+          <p>Proposition liée : <a href="{{ url_for('submission_review.show', submission_id=t.submission_id) }}">consulter le parcours de validation</a>. Les actions historiques sont indisponibles.</p>
+        {% else %}
         {% if t.status == 'pending' %}
           <form method="post" action="/admin/tracks/{{ t.id }}/approve">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -113,6 +116,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" style="background:#444">🔄 Image</button>
           </form>
+        {% endif %}
         {% endif %}
       </div>
     </div>

@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 import db
+from media_proof_fixtures import add_media_proof
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,6 +54,7 @@ class MigrationTests(unittest.TestCase):
         sid = self.submission(conn)
         self.accepted(conn, sid)
         tid = self.track(conn)
+        add_media_proof(conn, sid, tid)
         conn.execute("UPDATE submissions SET status='pending_audio_review',track_id=? WHERE id=?", (tid, sid))
         conn.commit()
         return sid, tid
@@ -71,8 +73,8 @@ class MigrationTests(unittest.TestCase):
         db.init_db(self.path)
         db.init_db(self.path)
         conn = self.connect()
-        self.assertEqual([r[0] for r in conn.execute('SELECT version FROM schema_migrations ORDER BY version')], [1, 2])
-        self.assertEqual(conn.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0], 2)
+        self.assertEqual([r[0] for r in conn.execute('SELECT version FROM schema_migrations ORDER BY version')], [1, 2, 3])
+        self.assertEqual(conn.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0], 3)
         self.assertEqual(conn.execute('SELECT COUNT(*) FROM genres').fetchone()[0], 3)
         self.assertEqual(conn.execute('PRAGMA foreign_key_check').fetchall(), [])
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM submissions").fetchone()[0], 0)
@@ -140,6 +142,7 @@ class MigrationTests(unittest.TestCase):
         sid = self.submission(conn)
         self.accepted(conn, sid)
         tid = self.track(conn)
+        add_media_proof(conn, sid, tid)
         conn.execute("UPDATE submissions SET status='pending_audio_review',track_id=? WHERE id=?", (tid, sid))
         with self.assertRaises(sqlite3.IntegrityError):
             conn.execute("UPDATE tracks SET status='approved' WHERE id=?", (tid,))
@@ -160,6 +163,7 @@ class MigrationTests(unittest.TestCase):
             with self.assertRaises(sqlite3.IntegrityError):
                 conn.execute("UPDATE submissions SET status='pending_audio_review',track_id=? WHERE id=?", (tid, sid))
         tid = self.track(conn)
+        add_media_proof(conn, sid, tid)
         conn.execute("UPDATE submissions SET status='pending_audio_review',track_id=? WHERE id=?", (tid, sid))
         with self.assertRaises(sqlite3.IntegrityError):
             conn.execute("UPDATE submissions SET status='rejected',rejection_reason='Wrong audio' WHERE id=?", (sid,))
@@ -179,6 +183,7 @@ class MigrationTests(unittest.TestCase):
                 reviewed_by=1,reviewed_at=CURRENT_TIMESTAMP WHERE id=?""", (sid,))
         self.accepted(conn, sid)
         tid = self.track(conn)
+        add_media_proof(conn, sid, tid)
         conn.execute("UPDATE submissions SET status='pending_audio_review',track_id=? WHERE id=?", (tid, sid))
         other = self.submission(conn, source='another-video')
         self.accepted(conn, other)
@@ -326,6 +331,7 @@ class MigrationTests(unittest.TestCase):
             conn.execute('DELETE FROM submissions WHERE id=?', (sid,))
         self.accepted(conn, sid)
         tid = self.track(conn)
+        add_media_proof(conn, sid, tid)
         conn.execute("UPDATE submissions SET status='pending_audio_review',track_id=? WHERE id=?", (tid, sid))
         conn.commit()
         for status in ('pending_audio_review', 'rejected'):

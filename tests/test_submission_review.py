@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 import db
+from media_proof_fixtures import add_media_proof
 from submissions import SubmissionService, SubmissionError
 from submission_review import SubmissionReviewService
 
@@ -213,6 +214,7 @@ class ReviewServiceTests(unittest.TestCase):
         self.service.accept(2,sid)
         tid = self.conn.execute('''INSERT INTO tracks(uploader_id,file_path,title,genre_id)
             VALUES (1,'fixture.mp3','Audio',1)''').lastrowid
+        add_media_proof(self.conn, sid, tid)
         self.conn.execute("UPDATE submissions SET status='pending_audio_review',track_id=? WHERE id=?",(tid,sid))
         self.conn.commit()
         for final in (False,True):

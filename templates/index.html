@@ -348,51 +348,15 @@
           <button type="submit">Se déconnecter</button>
         </form>
 
-        <p><a href="{{ url_for('contributions.dashboard') }}"><strong>Mes propositions — soumettre un lien YouTube ou Spotify</strong></a></p>
-
         {% if message %}<p class="ok">{{ message }}</p>{% endif %}
         {% if error %}<p class="err">{{ error }}</p>{% endif %}
 
         <h2>Proposer un morceau</h2>
         <p class="muted">
-          Faites-nous découvrir votre musique.
-          Chaque titre est écouté avant d'intégrer la sélection ALIVE.
+          Proposez d’abord un lien YouTube ou Spotify, puis complétez les informations du morceau.
+          Après acceptation, le MP3 fera l’objet d’une validation audio distincte avant toute diffusion.
         </p>
-
-        <form method="post" action="/tracks" enctype="multipart/form-data">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <p>
-            <label>Fichier MP3
-              <input type="file" name="file" accept="audio/mpeg,.mp3" required>
-            </label>
-          </p>
-          <p>
-            <label>Titre
-              <input type="text" name="title" required>
-            </label>
-          </p>
-          <p>
-            <label>Artiste / chaîne
-              <input type="text" name="artist">
-            </label>
-          </p>
-          <p>
-            <label>Genre
-              <select name="genre_id" required>
-                <option value="">— choisir —</option>
-                {% for g in genres %}
-                  <option value="{{ g.id }}">{{ g.label }}</option>
-                {% endfor %}
-              </select>
-            </label>
-          </p>
-          <p>
-            <label>Lien YouTube / Spotify du créateur
-              <input type="url" name="source_url" placeholder="https://...">
-            </label>
-          </p>
-          <button type="submit">Envoyer mon morceau</button>
-        </form>
+        <a class="btn" href="{{ url_for('contributions.dashboard') }}">Mes propositions — soumettre un lien</a>
       {% else %}
         <h2>Rejoindre ALIVE</h2>
         <p class="muted">

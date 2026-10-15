@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import db
+from media_proof_fixtures import add_media_proof
 from metadata import MetadataRetrievalError, SpotifyMetadataClient, TrackMetadata, normalize_source_url
 from metadata.persistence import (begin_metadata_attempt, get_metadata_attempts,
                                   save_metadata_failure, save_metadata_result)
@@ -373,7 +374,7 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(row['metadata_generation'],0)
         self.assertIsNone(row['source_duration_seconds'])
         self.assertEqual(conn.execute('SELECT checksum FROM schema_migrations WHERE version=1').fetchone()[0],checksum)
-        self.assertEqual(conn.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0],2)
+        self.assertEqual(conn.execute('SELECT COUNT(*) FROM schema_migrations').fetchone()[0],3)
         self.assertEqual(conn.execute('PRAGMA foreign_key_check').fetchall(),[])
 
     def test_migration002_failure_rolls_back_columns_and_retries(self):
@@ -413,6 +414,7 @@ class PersistenceTests(unittest.TestCase):
             elif status=='pending_audio_review':
                 tid = self.conn.execute("""INSERT INTO tracks(uploader_id,file_path,title,genre_id)
                     VALUES (1,'tracks/test.mp3','Audio',1)""").lastrowid
+                add_media_proof(self.conn,self.sid,tid)
                 self.conn.execute('UPDATE submissions SET status=?,track_id=? WHERE id=?',(status,tid,self.sid))
                 self.conn.commit()
             elif status=='approved':

@@ -7,6 +7,7 @@
 <p>Contributeur : {{ proposal.contributor_id }}</p>
 {% if proposal.reviewed_at %}<p>Décision URL : {{ proposal.reviewed_at }} · administrateur {{ proposal.reviewed_by }}</p>{% endif %}
 {% if proposal.rejection_reason %}<p>Motif du refus : {{ proposal.rejection_reason }}</p>{% endif %}
+{% if proposal.track_id %}<p><a href="{{ url_for('submission_audio.review_page',submission_id=proposal.id) }}">Écouter le MP3, examiner la cover et effectuer la revue finale</a></p>{% endif %}
 {% if proposal.status == 'approved_awaiting_audio' %}<p>Source acceptée. Le dépôt MP3 sera ouvert lors d’une étape ultérieure. Cette proposition n’est pas diffusable.</p>{% endif %}
 {% if proposal.duplicates %}
 <section><h2>Avertissement de doublons</h2><p>Cette source a aussi été proposée par un autre contributeur. Cet avertissement ne bloque pas la décision.</p>

@@ -1,0 +1,34 @@
+{% extends 'submissions.html' %}
+{% block title %}Dépôt MP3 et cover{% endblock %}
+{% block content %}
+<h1>Dépôt MP3 et cover</h1>
+{% if proposal %}
+<p><a href="{{ url_for('contributions.show',submission_id=proposal.id) }}">Retour à ma proposition</a></p>
+<p>{{ proposal.title }} — {{ proposal.artist }} · {{ status_labels[proposal.status] }}</p>
+{% if proposal.status == 'approved_awaiting_audio' %}
+<p>Votre lien a été accepté. Déposez ensemble votre MP3 et une cover dont vous déclarez les droits. Les images YouTube et Spotify ne sont pas automatiquement autorisées.</p>
+<p role="status">Le document ci-dessous est un brouillon technique. Aucune diffusion ne peut être approuvée avant sa validation juridique.</p>
+<pre style="white-space:pre-wrap">{{ document.text }}</pre>
+<form method="post" enctype="multipart/form-data" action="{{ url_for('submission_audio.upload',submission_id=proposal.id) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<input type="hidden" name="document_version" value="{{ document.version }}">
+<input type="hidden" name="document_sha256" value="{{ document.sha256 }}">
+<label>Nom du déclarant <input name="declared_name" maxlength="256" required></label>
+<label>Artiste concerné <input name="declared_artist" maxlength="256" value="{{ proposal.artist }}" required></label>
+<label>Qualité <select name="declarant_capacity" required><option value="">— choisir —</option><option value="rights_holder">Titulaire des droits</option><option value="authorized_representative">Représentant autorisé</option></select></label>
+<label>MP3 <input type="file" name="audio" accept=".mp3,audio/mpeg" required></label>
+<p>Maximum {{ limits.audio_bytes // 1048576 }} Mio et {{ limits.duration_seconds }} secondes.</p>
+<label>Cover autorisée <input type="file" name="cover" accept=".jpg,.jpeg,.png,image/jpeg,image/png" required></label>
+<p>JPEG ou PNG statique, maximum {{ limits.cover_bytes // 1048576 }} Mio.</p>
+<label><input type="checkbox" name="music_accepted" required> Je confirme explicitement la déclaration musicale du document affiché pour le MP3 déposé.</label>
+<label><input type="checkbox" name="visual_accepted" required> Je confirme explicitement la déclaration visuelle du même document pour la cover déposée.</label>
+<button type="submit">Déposer les deux fichiers pour revue</button>
+</form>
+{% elif proof %}
+<p>Le dépôt est enregistré et ne peut pas être remplacé. Une validation technique ne déclenche jamais sa diffusion.</p>
+<p><a href="{{ url_for('submission_audio.owned_media',submission_id=proposal.id,kind='audio') }}">Écouter mon MP3</a> · <a href="{{ url_for('submission_audio.owned_media',submission_id=proposal.id,kind='cover') }}">Voir ma cover</a></p>
+{% if proposal.rejection_reason %}<p>Motif du refus : {{ proposal.rejection_reason }}</p>{% endif %}
+<details><summary>Déclaration enregistrée</summary><p>{{ proof.declared_name }} — {{ proof.declared_artist }} · {{ proof.accepted_at }}</p><pre style="white-space:pre-wrap">{{ proof.document_text }}</pre></details>
+{% endif %}
+{% endif %}
+{% endblock %}

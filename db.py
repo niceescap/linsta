@@ -3,6 +3,7 @@ import os
 import hashlib
 import re
 from pathlib import Path
+from rights import document_matches, document_is_production_ready, identity_is_valid
 
 
 def _configured_path():
@@ -17,6 +18,11 @@ def get_db(path=None):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    # Fail closed on connections missing these functions. They validate the
+    # registered document snapshot, not the ownership of physical media bytes.
+    conn.create_function('digger_document_matches', 3, document_matches, deterministic=True)
+    conn.create_function('digger_document_ready', 3, document_is_production_ready, deterministic=True)
+    conn.create_function('digger_identity_valid', 1, identity_is_valid, deterministic=True)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -88,7 +94,7 @@ def migrate_db(path=None, *, migrations_dir=None):
         conn.close()
 
 
-def finalize_audio_review(conn, submission_id, reviewer_id, *, approve, reason=None):
+def finalize_audio_review(conn, submission_id, reviewer_id, *, approve, reason=None, precondition=None):
     """Atomic final decision on a dedicated, idle connection.
 
     Caller must authorize the authenticated admin; SQL validates the recorded
@@ -102,6 +108,8 @@ def finalize_audio_review(conn, submission_id, reviewer_id, *, approve, reason=N
                            (submission_id,)).fetchone()
         if row is None:
             raise ValueError('Submission is not awaiting audio review')
+        if precondition is not None:
+            precondition(conn, row)
         conn.execute("""UPDATE submissions SET status=?, audio_reviewed_by=?,
             audio_reviewed_at=CURRENT_TIMESTAMP, rejection_reason=?, updated_at=CURRENT_TIMESTAMP
             WHERE id=?""", ('approved' if approve else 'rejected', reviewer_id,

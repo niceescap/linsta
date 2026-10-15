@@ -30,7 +30,7 @@ def clear_login_session():
     rotate_csrf_token()
 
 
-def init_web_security(app, connection_factory):
+def init_web_security(app, connection_factory, *, pre_body_check=None):
     app.config.setdefault('CSRF_MAX_AGE', 3600)
     app.jinja_env.globals['csrf_token'] = csrf_token
 
@@ -58,6 +58,9 @@ def init_web_security(app, connection_factory):
         # Compatibility for existing routes reading session display/role fields.
         session['role'] = row['role']
         session['display_name'] = row['display_name']
+
+    if pre_body_check is not None:
+        app.before_request(pre_body_check)
 
     @app.before_request
     def protect_csrf():

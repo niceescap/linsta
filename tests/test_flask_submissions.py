@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
+from media_proof_fixtures import add_media_proof
 import test_flask_security as security
 from submissions import SubmissionError, SubmissionService
 
@@ -56,7 +57,7 @@ class FlaskSubmissionTests(unittest.TestCase):
     def assert_no_track(self):
         self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM tracks').fetchone()[0],0)
 
-    def test_dashboard_empty_and_home_link_preserves_mp3_form(self):
+    def test_dashboard_empty_and_home_links_to_url_workflow(self):
         result = self.get('/submissions')
         self.assertEqual(result.status_code,200)
         self.assertIn('Créer mon brouillon',result.get_data(as_text=True))
@@ -64,8 +65,8 @@ class FlaskSubmissionTests(unittest.TestCase):
         self.assertEqual(result.headers['Cache-Control'],'no-store')
         home = self.get('/').get_data(as_text=True)
         self.assertIn('href="/submissions"',home)
-        self.assertIn('action="/tracks"',home)
-        self.assertIn('name="file"',home)
+        self.assertNotIn('action="/tracks"',home)
+        self.assertNotIn('name="file"',home)
         self.http.assert_not_called()
 
     def test_create_metadata_redirect_and_display(self):
@@ -367,7 +368,7 @@ class FlaskSubmissionTests(unittest.TestCase):
         self.assertNotIn('user2@example.test',text)
         self.assertNotIn('has_other_contributor_source',text)
 
-    def test_audio_states_render_readonly_without_new_audio_routes(self):
+    def test_audio_states_render_readonly_with_separate_deposit_page(self):
         sid=self.draft()
         self.complete(sid)
         self.service.submit_for_review(1,sid)
@@ -375,6 +376,7 @@ class FlaskSubmissionTests(unittest.TestCase):
             reviewed_at=CURRENT_TIMESTAMP WHERE id=?""",(sid,))
         tid=self.conn.execute("""INSERT INTO tracks(uploader_id,file_path,title,genre_id,status)
             VALUES (1,'tracks/fixture.mp3','Fixture audio',1,'pending')""").lastrowid
+        add_media_proof(self.conn, sid, tid)
         self.conn.execute("UPDATE submissions SET status='pending_audio_review',track_id=? WHERE id=?",(tid,sid))
         self.conn.commit()
         for label in ('Audio en attente de validation','Audio validé'):
@@ -387,7 +389,7 @@ class FlaskSubmissionTests(unittest.TestCase):
             self.assertEqual(self.mutate(f'/submissions/{sid}/submit').status_code,409)
             self.assertEqual(self.mutate(f'/submissions/{sid}/editorial',{'title':'Changed'}).status_code,409)
             self.assertEqual(self.mutate(f'/submissions/{sid}/refresh-metadata').status_code,409)
-        self.assertEqual(self.get(f'/submissions/{sid}/audio').status_code,404)
+        self.assertEqual(self.get(f'/submissions/{sid}/audio').status_code,200)
         self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM tracks').fetchone()[0],1)
 
 

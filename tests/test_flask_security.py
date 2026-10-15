@@ -81,7 +81,7 @@ class FlaskSecurityTests(unittest.TestCase):
         factory = patch.object(self.module,'get_db',side_effect=lambda:db.get_db(self.path))
         factory.start()
         self.addCleanup(factory.stop)
-        for attribute in ('STORAGE_PATH','TRACKS_PATH','HLS_PATH'):
+        for attribute in ('STORAGE_PATH','META_PATH','HLS_PATH'):
             mock = patch.object(self.module,attribute,self.temp.name)
             mock.start()
             self.addCleanup(mock.stop)
@@ -260,14 +260,14 @@ class FlaskSecurityTests(unittest.TestCase):
         self.assertEqual(self.post(f'/admin/tracks/{tid}/delete',data={'csrf_token':self.token()}).status_code,302)
         self.assertIsNone(self.conn.execute('SELECT id FROM tracks WHERE id=?',(tid,)).fetchone())
 
-    def test_tracks_endpoint_stays_open_with_csrf(self):
+    def test_tracks_endpoint_is_retired_even_with_csrf(self):
         self.session_user(1)
         data = {'csrf_token':self.token(),'file':(io.BytesIO(b'fake-test-audio'), 'test.mp3'),
                 'title':'Legacy upload','genre_id':'1'}
-        with patch.object(self.module,'MutagenFile',return_value=None):
-            result = self.post('/tracks',data=data,content_type='multipart/form-data')
-        self.assertEqual(result.status_code,302)
-        self.assertEqual(self.conn.execute('SELECT status FROM tracks').fetchone()[0],'pending')
+        result = self.post('/tracks',data=data,content_type='multipart/form-data')
+        self.assertEqual(result.status_code,410)
+        self.assertEqual(result.json['submissions_url'],'/submissions')
+        self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM tracks').fetchone()[0],0)
         self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM submissions').fetchone()[0],0)
 
     def test_current_account_connection_closed(self):
