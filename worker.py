@@ -83,7 +83,7 @@ def clear_hls_dir():
             f.unlink()
 
 
-def start_encoder():
+def start_encoder(*, threads=None):
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin",
         "-f", "s16le", "-ar", str(RATE), "-ac", str(CHANNELS),
@@ -94,6 +94,9 @@ def start_encoder():
         "-hls_list_size", "6", "-hls_flags", "delete_segments+omit_endlist+temp_file",
         "-hls_segment_filename", os.path.join(HLS_PATH, "seg_%09d.ts"), PLAYLIST,
     ]
+    if threads is not None:
+        cmd[cmd.index('-c:a'):cmd.index('-c:a')] = ['-threads', str(threads)]
+        cmd[1:1] = ['-filter_threads', str(threads), '-filter_complex_threads', str(threads)]
     # stderr inherited: FFmpeg diagnostics appear in the service logs.
     return subprocess.Popen(cmd, stdin=subprocess.PIPE, bufsize=0)
 
@@ -117,7 +120,8 @@ def stop_process(proc):
 
 
 class Engine:
-    def __init__(self):
+    def __init__(self, *, threads=None):
+        self.threads = threads
         self.encoder = None
         self.decoder = None
         self.segment_stamp = None
@@ -125,7 +129,7 @@ class Engine:
         self.started = self.last_progress
 
     def start(self):
-        self.encoder = start_encoder()
+        self.encoder = start_encoder() if self.threads is None else start_encoder(threads=self.threads)
         self.started = self.last_progress = time.monotonic()
         self.segment_stamp = None
         print(f"[worker] encoder PID={self.encoder.pid}", flush=True)
@@ -191,6 +195,9 @@ class Engine:
             "-re", "-i", path, "-vn", "-sn", "-dn", "-map", "0:a:0",
             "-f", "s16le", "-ac", str(CHANNELS), "-ar", str(RATE), "pipe:1",
         ]
+        if self.threads is not None:
+            cmd[cmd.index('-i'):cmd.index('-i')] = ['-threads', str(self.threads)]
+            cmd[1:1] = ['-filter_threads', str(self.threads), '-filter_complex_threads', str(self.threads)]
         self.decoder = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=0)
         received = 0
         try:
