@@ -5,6 +5,7 @@ The private SQLite catalogue is independent of the application database.
 """
 import argparse
 import base64
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import hmac
@@ -58,6 +59,21 @@ def connect(root):
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys=ON')
     return conn
+
+
+@contextmanager
+def catalogue_lock(root):
+    """One exclusive lock for playback, migration and catalogue writes."""
+    safe_root(root)
+    fd = os.open(root/'radio.lock', os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError('Radio privée ou modification en cours : réessayer après son arrêt.') from None
+        yield
+    finally:
+        os.close(fd)
 
 
 def initialize(root):
@@ -132,7 +148,7 @@ def import_playlist(root, manifest, *, confirmed=False):
         rows.append((position,entry['file'],entry['title'],entry['artist'],digest,size,duration))
     conn = connect(root)
     try:
-        with conn:
+        with catalogue_lock(root), conn:
             conn.execute('BEGIN IMMEDIATE')
             if conn.execute('SELECT COUNT(*) FROM private_tracks').fetchone()[0]:
                 raise ValueError('Existing private catalogue is immutable; no tracks replaced')
@@ -145,7 +161,10 @@ def import_playlist(root, manifest, *, confirmed=False):
 def tracks(root):
     conn = connect(root)
     try:
-        result = [dict(row) for row in conn.execute('SELECT * FROM private_tracks WHERE private_rights_confirmed=1 ORDER BY position')]
+        columns = {row['name'] for row in conn.execute('PRAGMA table_info(private_tracks)')}
+        selection = ' AND enabled=1 AND removed_at IS NULL' if 'enabled' in columns else ''
+        result = [dict(row) for row in conn.execute(
+            'SELECT * FROM private_tracks WHERE private_rights_confirmed=1'+selection+' ORDER BY position')]
     finally:
         conn.close()
     if not result:
@@ -265,11 +284,8 @@ def play_loop(root, worker, *, seconds, engine=None):
 
 
 def run(root, seconds):
-    safe_root(root)
-    tracks(root)  # No socket or FFmpeg started before validation.
-    lock = os.open(root/'radio.lock',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
-    try:
-        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    with catalogue_lock(root):
+        tracks(root)  # Validate under the lock, before any socket or FFmpeg.
         password = (root/'access.key').read_text()
         if len(password) < 32:
             raise ValueError('Invalid private access key')
@@ -295,8 +311,6 @@ def run(root, seconds):
             server.shutdown()
             server.server_close()
             thread.join(timeout=3)
-    finally:
-        os.close(lock)
 
 
 def probe(root, *, progress_timeout=12):

@@ -18,8 +18,8 @@ Tout le runtime privé est sous :
 
 `/home/jean/digger/instance/demo/private-radio/`
 
-- MP3 FGL autorisés : directement dans ce répertoire, noms simples `01.mp3`,
-  `02.mp3`, etc. Environ dix recommandés, 1–20 acceptés.
+- MP3 FGL autorisés : directement dans ce répertoire, noms d’origine conservés,
+  y compris Unicode et espaces ; 1–30 pistes acceptées à l’import initial.
 - `playlist.json` : manifeste de préparation copié du modèle
   `private_radio_playlist.example.json`, avec les vrais titres/artistes.
 - `catalogue.sqlite` : **seule source de vérité de la playlist importée**, ordre,
@@ -31,7 +31,8 @@ Tout le runtime privé est sous :
 
 Répertoires 0700, fichiers runtime 0600. Aucun lien symbolique ni MP3 multi-liens
 accepté. Aucun fichier historique lu, copié ou modifié. L’init refuse d’écraser un
-catalogue/secret ; l’import refuse de remplacer une playlist existante.
+catalogue/secret ; l’import refuse de remplacer une playlist existante. La gestion
+décrite ci-dessous modifie uniquement les champs d’affichage et de programmation.
 
 Ce catalogue dédié ne contient **aucune table de contributions ni piste publique**.
 La confirmation d’utilisation privée FGL ne devient pas un consentement au contrat
@@ -41,13 +42,13 @@ Le flux privé ne doit pas être utilisé pour diffuser des dépôts en attente 
 
 ## Préparation puis lancement manuel
 
-Le répertoire/runtime vide est préparé par l’agent ; ne pas répéter `init`.
+Le répertoire/runtime est déjà initialisé ; ne pas répéter `init`.
 Le manifeste exemple contient des noms de remplacement, pas des morceaux réels.
 Déposer les fichiers autorisés sous le répertoire indiqué, copier le modèle en
 `instance/demo/private-radio/playlist.json` et adapter ses entrées. Aucun chemin
 externe ou URL n’est accepté. Aucun téléchargement ou client YouTube/Spotify.
 
-Depuis `/home/jean/digger`, après dépôt des MP3 :
+Uniquement pour un premier import dans un catalogue vide, depuis `/home/jean/digger` :
 
 ```bash
 instance/demo/venv/bin/python -B -m private_radio import \
@@ -112,7 +113,7 @@ transport distant ; le compte propriétaire conserve son accès aux fichiers.
 
 ## Vérifications automatisées
 
-Tests séquentiels bornés : confirmation explicite des droits, catalogue immuable,
+Tests séquentiels bornés : confirmation explicite des droits, import non remplaçant,
 ordre/hashes, refus de symlinks/URLs/fichiers modifiés, auth obligatoire sur tous
 les endpoints privés, absence d’accès aux sources/bases/clés, et vrai moteur HLS
 avec sons synthétiques locaux générés par FFmpeg (pas de réseau).
@@ -126,10 +127,12 @@ PYTHONPATH=.:tests timeout --signal=TERM --kill-after=2s 58s \
   test_legacy_upload_retirement.LegacyUploadRetirementTests.test_worker_still_selects_only_existing_approved_legacy_tracks
 ```
 
-Aucun flux FGL réel ne sera lancé avant réception et import des MP3 autorisés.
-
-État de préparation : répertoire 0700 et runtime initialisés, catalogue vide,
-manifeste de dix emplacements prêt sous `instance/demo/private-radio/playlist.json`.
+État du catalogue à la préparation de l’administration : 26 morceaux importés,
+dont Flex confirmé avec accord du collaborateur, quatre fichiers exclus.
+Le manifeste et l’audit privés sont sous `instance/demo/private-radio/`.
+Ils sont des instantanés de l’import initial ; SQLite reste la source de vérité
+après correction des métadonnées. Ne pas réimporter le manifeste pour annuler
+des modifications. Aucun flux FGL réel n’est lancé par cette préparation.
 Les tests synthétiques ont validé les contrôles de catalogue/authentification,
 le refus des fichiers bruts et symlinks, la compatibilité du worker par défaut,
 la boucle réelle 1,2,1 et le codec HLS. Un test de bout en bout supplémentaire
@@ -151,3 +154,88 @@ DIGGER_PRIVATE_HTTP_TEST=1 PYTHONPATH=.:tests \
 Ce test prend le port 17001 temporairement ; ne pas le lancer pendant une écoute
 privée réelle. Il ne nécessite pas de redémarrage du service web, et ne doit pas
 être lancé en parallèle d’une autre suite.
+
+## Administration du catalogue depuis un Mac
+
+Cette interface est une application séparée, **jamais enregistrée dans `app.py`**.
+Elle écoute uniquement sur `127.0.0.1:17002`, sans proxy Nginx, sans service
+persistant, sans dépendance nouvelle et sans redémarrage de `digger-demo.service`.
+Elle utilise la clé privée `access.key` et l’utilisateur `digger-test` : toute
+personne possédant cette clé peut administrer ce catalogue. La conserver uniquement
+pour les administrateurs de cet essai, ne pas la partager avec les artistes.
+La session du site public n’accorde aucun accès à cette interface distincte.
+
+Depuis le serveur, sous le compte propriétaire, vérifier que le port 17002 est
+libre (`ss -ltn 'sport = :17002'`). Si occupé, ne rien arrêter.
+
+```bash
+cd /home/jean/digger
+instance/demo/venv/bin/python -B -m private_radio_admin --seconds 3600
+```
+
+Lancement au premier plan, sans debug ni rechargement ; arrêt par Ctrl+C ou après
+une heure au maximum. Un seul serveur, requêtes limitées à 8 Kio, sockets bornées
+à 3 secondes, aucun log d’accès. Aucun MP3 n’est décodé lors de la consultation.
+
+Lors du premier lancement, une migration transactionnelle et idempotente ajoute
+`enabled`, `removed_at`, `revision` et `private_catalogue_events` au seul
+`instance/demo/private-radio/catalogue.sqlite` (version de schéma 1). Elle refuse
+de démarrer pendant un essai radio actif. Pour la préparer sans lancer de serveur :
+
+```bash
+instance/demo/venv/bin/python -B -m private_radio_admin --migrate-only
+```
+
+Cette migration a été appliquée pendant la préparation : 26 entrées conservées,
+quatre MP3 non importés inventoriés, historique et clé inchangés. Aucun morceau
+n’a été corrigé, désactivé ou retiré durant cette préparation ; aucun serveur
+d’administration n’a été lancé. Le rendu authentifié a été vérifié en mémoire.
+
+Sur le Mac (adapter `noe` à l’hôte SSH habituel) :
+
+```bash
+ssh -o ExitOnForwardFailure=yes -N \
+  -L 127.0.0.1:17002:127.0.0.1:17002 jean@noe
+```
+
+Ouvrir **http://127.0.0.1:17002/** dans le navigateur, puis s’authentifier avec
+`digger-test` et la clé consultée dans un outil privé sécurisé. Ne pas afficher
+la clé dans une commande ou une URL. Fermer le tunnel par Ctrl+C après usage.
+Ne jamais publier le port, ajouter ce serveur au vhost public ou le lancer sur
+`0.0.0.0`. Aucun certificat nécessaire dans le tunnel SSH chiffré.
+
+L’interface affiche titre, artiste, durée et statut (actif, désactivé ou retiré),
+permet les corrections d’affichage et l’activation/désactivation. Le retrait
+requiert une case de confirmation et conserve la ligne, les MP3 et l’historique.
+Les fichiers MP3 non importés apparaissent séparément, sans bouton d’import ni
+lien audio. Les pistes retirées restent visibles avec leur statut et ne sont pas
+présentées comme de nouveaux fichiers à importer.
+
+### Concurrence et sécurité
+
+- Le moteur tient `radio.lock` pendant toute son exécution, avant même de charger
+  la playlist. L’import initial, la migration et chaque écriture administrative
+  utilisent le même verrou exclusif, sans attente : pendant la radio, la lecture
+  de l’interface reste possible mais les écritures retournent HTTP 409.
+- Procédure : arrêter **son propre essai privé** par Ctrl+C, modifier le catalogue,
+  puis relancer la radio. Aucun arrêt de moteur via le navigateur et aucune
+  interruption ou modification à chaud de la piste en cours.
+- Les pistes désactivées/retirées sont exclues au prochain lancement. Si toutes
+  sont exclues, le moteur refuse de démarrer. Les empreintes et validations
+  techniques restent vérifiées sur les pistes retenues.
+- Chaque édition vérifie une révision pour refuser les formulaires périmés ;
+  journal avant/après et changement sont atomiques dans SQLite. Le journal ne
+  contient aucune clé ni donnée du compte public. Il atteste une action du
+  détenteur de la clé partagée, sans identifier individuellement la personne.
+- Auth obligatoire sur toutes les URL, POST uniquement pour modifier, jeton CSRF
+  aléatoire par processus, contrôle Host/Origin, échappement HTML et en-têtes CSP,
+  anti-frame, no-store. Aucun fichier source, clé, base, preuve ou HLS servi.
+- Aucune nouvelle permission juridique, validation publique, contribution,
+  modification de MP3 ou modification de la base web n’est effectuée.
+
+Tests rapides dédiés (temporaires uniquement, sans sockets ni vrais médias) :
+
+```bash
+PYTHONPATH=.:tests timeout --signal=TERM --kill-after=2s 45s \
+  instance/demo/venv/bin/python -B -m unittest -v test_private_radio_admin
+```
