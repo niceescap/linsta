@@ -92,8 +92,10 @@ def initialize(root):
 
 
 def validate_file(root, name, *, digest=None, size=None):
-    if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_. -]{0,150}\.mp3',name):
-        raise ValueError('Use a simple local MP3 filename, never a path or URL')
+    if (not isinstance(name,str) or not name.lower().endswith('.mp3')
+            or len(name.encode('utf-8')) > 255 or '/' in name or '\\' in name
+            or any(ord(c)<32 or ord(c)==127 for c in name)):
+        raise ValueError('Use a local MP3 basename, never a path, URL or control character')
     stream, snapshot = checked_open(root,name,sha256=digest,size=size)
     with stream:
         if snapshot[2] > 50*1024*1024 or os.fstat(stream.fileno()).st_nlink != 1:
@@ -116,8 +118,8 @@ def import_playlist(root, manifest, *, confirmed=False):
     if confirmed is not True:
         raise ValueError('Explicit administrator confirmation of private-test rights required')
     entries = json.loads(Path(manifest).read_text())
-    if not isinstance(entries,list) or not 1 <= len(entries) <= 20:
-        raise ValueError('Expected 1–20 local tracks (approximately 10 recommended)')
+    if not isinstance(entries,list) or not 1 <= len(entries) <= 30:
+        raise ValueError('Expected 1–30 local tracks')
     rows = []
     for position, entry in enumerate(entries):
         if set(entry) != {'file','title','artist'}:

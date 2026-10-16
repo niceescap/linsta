@@ -73,6 +73,31 @@ class PrivateRadioTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 radio.validate_file(self.root,name)
 
+    def test_original_unicode_and_punctuation_names_without_renaming(self):
+        name = "I’ve got my eyes on you (Final mix)!.MP3"
+        path = self.root/name
+        path.write_bytes(self.audio)
+        before = path.read_bytes()
+        digest,size,duration = radio.validate_file(self.root,name)
+        self.assertEqual(path.read_bytes(),before)
+        self.assertEqual(size,len(before))
+        self.assertGreater(duration,0)
+        self.assertEqual(len(digest),64)
+        for invalid in ('../outside.mp3','dir/file.mp3','dir\\file.mp3','bad\x00.mp3','bad\n.mp3'):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                radio.validate_file(self.root,invalid)
+
+    def test_playlist_accepts_30_tracks_but_rejects_31(self):
+        rows = [{'file':f'{i}.mp3','title':f'Track {i}','artist':'Synthetic'} for i in range(30)]
+        self.manifest.write_text(json.dumps(rows+[{'file':'extra.mp3','title':'Extra','artist':'Synthetic'}]))
+        with self.assertRaises(ValueError):
+            radio.import_playlist(self.root,self.manifest,confirmed=True)
+        self.manifest.write_text(json.dumps(rows))
+        with patch.object(radio,'validate_file',return_value=('a'*64,100,1.0)):
+            radio.import_playlist(self.root,self.manifest,confirmed=True)
+        with sqlite3.connect(self.root/'catalogue.sqlite') as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM private_tracks').fetchone()[0],30)
+
     def test_initialization_is_private_and_never_overwrites(self):
         key = (self.root/'access.key').read_bytes()
         self.assertEqual(self.root.stat().st_mode & 0o077,0)
@@ -214,9 +239,10 @@ class PrivateRadioTests(unittest.TestCase):
         playlist = (self.root/'hls/stream.m3u8').read_text()
         segments = [line for line in playlist.splitlines() if radio.SEGMENT.fullmatch(line)]
         self.assertTrue(segments)
-        data = json.loads(subprocess.check_output(['ffprobe','-v','error','-show_entries',
+        data = json.loads(subprocess.check_output(['ffprobe','-v','error','-threads','1',
+            '-analyzeduration','1000000','-probesize','1048576','-show_entries',
             'stream=codec_name,codec_type,sample_rate,channels','-of','json',
-            str(self.root/'hls'/segments[-1])],timeout=5))
+            str(self.root/'hls'/segments[-1])],timeout=10))
         audio = [stream for stream in data['streams'] if stream['codec_type']=='audio']
         self.assertEqual((audio[0]['codec_name'],audio[0]['sample_rate'],audio[0]['channels']),('aac','44100',2))
         self.assertIsNone(engine.encoder)
