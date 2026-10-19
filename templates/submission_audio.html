@@ -7,8 +7,13 @@
 <p>{{ proposal.title }} — {{ proposal.artist }} · {{ status_labels[proposal.status] }}</p>
 {% if proposal.status == 'approved_awaiting_audio' %}
 <p>Votre lien a été accepté. Déposez ensemble votre MP3 et une cover dont vous déclarez les droits. Les images YouTube et Spotify ne sont pas automatiquement autorisées.</p>
-<p role="status">Le document ci-dessous est un brouillon technique. Aucune diffusion ne peut être approuvée avant sa validation juridique.</p>
+<p class="muted"><small>Version bêta — Conditions de diffusion en cours de validation juridique</small></p>
+<p class="muted"><small><a href="{{ url_for('submission_audio.conditions',submission_id=proposal.id) }}">Consulter les conditions de diffusion</a></small></p>
+<details>
+<summary>Déclaration technique enregistrée avec ce dépôt — {{ document.version }}</summary>
+<p>Les deux cases ci-dessous portent uniquement sur ce brouillon technique. Le projet V0.3 consultable séparément est informatif et n’est pas le document accepté. Aucune nouvelle contribution ne peut être approuvée pour diffusion avant validation juridique.</p>
 <pre style="white-space:pre-wrap">{{ document.text }}</pre>
+</details>
 <form method="post" enctype="multipart/form-data" action="{{ url_for('submission_audio.upload',submission_id=proposal.id) }}">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <input type="hidden" name="document_version" value="{{ document.version }}">

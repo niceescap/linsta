@@ -1,0 +1,21 @@
+# STEP 1: HTTP-01 webroot only. No certificate or application upstream required.
+server {
+    listen 80;
+    server_name dig.hqwi.re;
+    access_log off;
+    auth_basic off;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+        autoindex off;
+        disable_symlinks on;
+        allow all;
+        limit_except GET { deny all; }
+        try_files $uri =404;
+    }
+
+    location / {
+        return 404;
+    }
+}

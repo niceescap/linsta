@@ -92,6 +92,15 @@ class FlaskReviewTests(unittest.TestCase):
         forms = re.findall(r'<form\b.*?</form>',text,re.S)
         self.assertEqual(len(forms),3)
         for form in forms: self.assertIn('name="csrf_token"',form)
+        self.assertIn('id="initial-review-actions"',text)
+        for action, label in (('accept','Accepter la candidature'),('reject','Refuser la candidature')):
+            decision = next(form for form in forms if f'action="{self.route(sid,"/"+action)}"' in form)
+            self.assertIn('method="post"',decision)
+            self.assertIn(label,decision)
+            self.assertNotIn('disabled',decision)
+            self.assertLess(text.index(decision),text.index('<h2>Métadonnées fournisseur</h2>'))
+        self.assertEqual(self.conn.execute('SELECT status FROM submissions WHERE id=?',(sid,)).fetchone()[0],
+                         'pending_review')
         for forbidden in ('<audio','<img','type="file"','/tracks/'):
             self.assertNotIn(forbidden,text)
         self.assert_no_track()
@@ -130,6 +139,8 @@ class FlaskReviewTests(unittest.TestCase):
         self.assert_no_track()
         text = self.get(result.location).get_data(as_text=True)
         self.assertIn('n’est pas diffusable',text)
+        self.assertIn('Acceptée — MP3 attendu',text)
+        self.assertNotIn('id="initial-review-actions"',text)
         self.assertNotIn('action="'+self.route(sid,'/accept')+'"',text)
 
     def test_reject_requires_reason_and_preserves_history(self):

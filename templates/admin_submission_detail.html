@@ -5,10 +5,26 @@
 <h1>Proposition {{ proposal.id }} — {{ proposal.title or 'Sans titre' }}</h1>
 <p class="status">{{ status_labels[proposal.status] }}</p>
 <p>Contributeur : {{ proposal.contributor_id }}</p>
+{% if proposal.status == 'pending_review' %}
+<section aria-labelledby="initial-review-actions">
+<h2 id="initial-review-actions">Décision initiale</h2>
+<p>Cette décision porte uniquement sur la candidature. L’acceptation permet ensuite le dépôt du MP3 et de la cover avec les consentements requis ; elle n’autorise aucune diffusion.</p>
+<p>Si nécessaire, enregistrez les corrections éditoriales ci-dessous avant de décider.</p>
+<form method="post" action="{{ url_for('submission_review.accept', submission_id=proposal.id) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<button type="submit">Accepter la candidature — MP3 attendu</button>
+</form>
+<form method="post" action="{{ url_for('submission_review.reject', submission_id=proposal.id) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>Motif du refus <input name="reason" required></label>
+<button type="submit">Refuser la candidature</button>
+</form>
+</section>
+{% endif %}
 {% if proposal.reviewed_at %}<p>Décision URL : {{ proposal.reviewed_at }} · administrateur {{ proposal.reviewed_by }}</p>{% endif %}
 {% if proposal.rejection_reason %}<p>Motif du refus : {{ proposal.rejection_reason }}</p>{% endif %}
 {% if proposal.track_id %}<p><a href="{{ url_for('submission_audio.review_page',submission_id=proposal.id) }}">Écouter le MP3, examiner la cover et effectuer la revue finale</a></p>{% endif %}
-{% if proposal.status == 'approved_awaiting_audio' %}<p>Source acceptée. Le dépôt MP3 sera ouvert lors d’une étape ultérieure. Cette proposition n’est pas diffusable.</p>{% endif %}
+{% if proposal.status == 'approved_awaiting_audio' %}<p>Source acceptée. Le contributeur peut maintenant déposer le MP3, la cover et ses consentements depuis son espace. Cette proposition n’est pas diffusable.</p>{% endif %}
 {% if proposal.duplicates %}
 <section><h2>Avertissement de doublons</h2><p>Cette source a aussi été proposée par un autre contributeur. Cet avertissement ne bloque pas la décision.</p>
 <ul>{% for duplicate in proposal.duplicates %}<li><a href="{{ url_for('submission_review.show', submission_id=duplicate.id) }}">Proposition {{ duplicate.id }}</a> · contributeur {{ duplicate.contributor_id }} · {{ status_labels[duplicate.status] }}</li>{% endfor %}</ul></section>
@@ -40,12 +56,6 @@
 <label>Genre <select name="genre_id" required><option value="">— choisir —</option>
 {% for genre in genres %}<option value="{{ genre.id }}" {% if values.get('genre_id')|string == genre.id|string %}selected{% endif %}>{{ genre.label }}</option>{% endfor %}</select></label>
 <button type="submit">Enregistrer les corrections</button></form>
-<p>Enregistrez les corrections avant de prendre une décision.</p>
-<form method="post" action="{{ url_for('submission_review.accept', submission_id=proposal.id) }}">
-<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Accepter la proposition URL</button></form>
-<form method="post" action="{{ url_for('submission_review.reject', submission_id=proposal.id) }}">
-<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-<label>Motif du refus <input name="reason" required></label><button type="submit">Refuser la proposition</button></form>
 {% else %}
 <dl><dt>Titre</dt><dd>{{ proposal.title or 'Non disponible' }}</dd><dt>Artiste</dt><dd>{{ proposal.artist or 'Non disponible' }}</dd><dt>Genre</dt><dd>{% for genre in genres %}{% if genre.id == proposal.genre_id %}{{ genre.label }}{% endif %}{% endfor %}</dd></dl>
 <p>Aucune décision URL n’est disponible à cette étape.</p>

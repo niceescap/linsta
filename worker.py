@@ -5,10 +5,12 @@ The worker owns only files it creates in storage/hls. A single instance is requi
 """
 import json
 import os
+import queue
 import select
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -24,6 +26,7 @@ PCM_CHUNK = RATE * BYTES_PER_FRAME // 5  # 200 ms
 SEGMENT_DURATION = 4
 HEALTH_TIMEOUT = 20  # seconds without a newly published segment
 STARTUP_TIMEOUT = 20
+DECODER_TIMEOUT = 60  # Private continuous mode: bounded input wait, distinct from HLS health.
 STOP = False
 
 
@@ -120,8 +123,13 @@ def stop_process(proc):
 
 
 class Engine:
-    def __init__(self, *, threads=None):
+    def __init__(self, *, threads=None, continuous=False):
         self.threads = threads
+        self.continuous = continuous
+        self.pcm_queue = queue.Queue(maxsize=16)  # <= 3.2 seconds, never unbounded audio.
+        self.pump_stop = threading.Event()
+        self.pump = None
+        self.pump_error = None
         self.encoder = None
         self.decoder = None
         self.segment_stamp = None
@@ -132,17 +140,36 @@ class Engine:
         self.encoder = start_encoder() if self.threads is None else start_encoder(threads=self.threads)
         self.started = self.last_progress = time.monotonic()
         self.segment_stamp = None
+        os.set_blocking(self.encoder.stdin.fileno(), False)
+        self.pump_stop.clear()
+        self.pump_error = None
+        if self.continuous:
+            self.pump = threading.Thread(target=self._pump_pcm, name='private-pcm-clock', daemon=True)
+            self.pump.start()
         print(f"[worker] encoder PID={self.encoder.pid}", flush=True)
 
     def stop(self):
+        self.pump_stop.set()
+        if self.pump is not None:
+            self.pump.join(timeout=2)
+            self.pump = None
         stop_process(self.decoder)
         self.decoder = None
         stop_process(self.encoder)
         self.encoder = None
+        while not self.pcm_queue.empty():
+            self.pcm_queue.get_nowait()
+            self.pcm_queue.task_done()
 
     def check(self):
+        if self.pump_error is not None:
+            raise PipelineError(str(self.pump_error))
         if self.encoder is None or self.encoder.poll() is not None:
             raise PipelineError("encodeur FFmpeg arrêté")
+        if self.continuous and self.pump is not None and threading.current_thread() is not self.pump:
+            if not self.pump.is_alive():
+                raise PipelineError('horloge PCM privée arrêtée')
+            return  # Only the pump inspects HLS: no competing clock updates or duplicate disk reads.
         now = time.monotonic()
         try:
             # temp_file makes published segments immutable; inspect the playlist too.
@@ -157,26 +184,80 @@ class Engine:
         except (OSError, UnicodeError):
             pass
         if now - self.last_progress > (HEALTH_TIMEOUT if self.segment_stamp else STARTUP_TIMEOUT):
-            raise PipelineError("playlist absente ou segments HLS sans progression")
+            raise PipelineError(f"playlist absente ou segments HLS sans progression "
+                                f"({now-self.last_progress:.1f}s; encoder={self.encoder.poll()}; "
+                                f"decoder={self.decoder.poll() if self.decoder else 'absent'})")
 
     def send(self, pcm):
+        if self.continuous:
+            while pcm and not STOP and not self.pump_stop.is_set():
+                self.check()
+                try:
+                    self.pcm_queue.put(pcm, timeout=0.2)
+                    return
+                except queue.Full:
+                    continue
+        else:
+            self._send_pcm(pcm)
+
+    def _send_pcm(self, pcm):
         """Feed a bounded PCM buffer without blocking indefinitely on an unresponsive encoder."""
         if not pcm:
             return
         view = memoryview(pcm)
         fd = self.encoder.stdin.fileno()
-        while view and not STOP:
+        while view and not STOP and not self.pump_stop.is_set():
             self.check()
             _, ready, _ = select.select([], [fd], [], 0.5)
             if not ready:
                 continue
             try:
                 sent = os.write(fd, view)
+            except BlockingIOError:
+                continue
             except (BrokenPipeError, OSError) as exc:
                 raise PipelineError("pipe encodeur cassé") from exc
             if sent <= 0:
                 raise PipelineError("pipe encodeur fermé")
             view = view[sent:]
+
+    def _pump_pcm(self):
+        """Keep one encoder clock alive even while a decoder starts/exits or I/O waits."""
+        gap_started = None
+        warned = False
+        deadline = time.monotonic()
+        try:
+            while not STOP and not self.pump_stop.is_set():
+                start = time.monotonic()
+                try:
+                    pcm = self.pcm_queue.get_nowait()
+                    queued = True
+                    if warned:
+                        print(f'[worker] private PCM resumed after {start-gap_started:.1f}s silence', flush=True)
+                    gap_started, warned = None, False
+                except queue.Empty:
+                    queued = False
+                    pcm = bytes(PCM_CHUNK)
+                    if gap_started is None:
+                        gap_started = start
+                    if start-gap_started > DECODER_TIMEOUT:
+                        raise PipelineError(f'source PCM inactive depuis {DECODER_TIMEOUT}s; silence arrêté')
+                    if not warned and start-gap_started >= 1:
+                        print('[worker] private PCM unavailable; temporary silence (decoder/I/O wait)', flush=True)
+                        warned = True
+                try:
+                    self._send_pcm(pcm)
+                finally:
+                    if queued:
+                        self.pcm_queue.task_done()
+                # Absolute audio clock: scheduler overhead must not accumulate per chunk.
+                deadline += len(pcm)/(RATE*BYTES_PER_FRAME)
+                now = time.monotonic()
+                if now-deadline > 0.2:
+                    deadline = now  # Never catch up a long stall with an unbounded burst.
+                self.pump_stop.wait(max(0,deadline-now))
+        except (PipelineError, OSError) as exc:
+            self.pump_error = exc
 
     def silence(self, seconds=1):
         """Pace the raw PCM input: FFmpeg cannot infer wall-clock speed from pipe:0."""
@@ -195,27 +276,40 @@ class Engine:
             "-re", "-i", path, "-vn", "-sn", "-dn", "-map", "0:a:0",
             "-f", "s16le", "-ac", str(CHANNELS), "-ar", str(RATE), "pipe:1",
         ]
+        if self.continuous:
+            # The PCM pump is the sole clock; the bounded queue supplies backpressure.
+            cmd.remove('-re')
         if self.threads is not None:
             cmd[cmd.index('-i'):cmd.index('-i')] = ['-threads', str(self.threads)]
             cmd[1:1] = ['-filter_threads', str(self.threads), '-filter_complex_threads', str(self.threads)]
         self.decoder = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=0)
         received = 0
+        last_pcm = time.monotonic()
         try:
             fd = self.decoder.stdout.fileno()
             while not STOP:
                 self.check()
                 readable, _, _ = select.select([fd], [], [], 0.5)
                 if not readable:
+                    if self.continuous and time.monotonic()-last_pcm > DECODER_TIMEOUT:
+                        raise PipelineError(f'decodeur sans PCM depuis {DECODER_TIMEOUT}s; '
+                                            f'pid={self.decoder.pid}; exit={self.decoder.poll()}')
                     continue
                 chunk = os.read(fd, PCM_CHUNK)
                 if not chunk:
                     break
                 received += len(chunk)
                 self.send(chunk)
+                last_pcm = time.monotonic()
             if STOP:
                 return False
             code = self.decoder.wait(timeout=3)
-            return code == 0 and received > 0
+            if self.continuous:
+                # Finish the queued tail before changing the displayed track.
+                while self.pcm_queue.unfinished_tasks and not STOP:
+                    self.check()
+                    self.pump_stop.wait(0.05)
+            return code == 0 and received > 0 and not STOP
         finally:
             stop_process(self.decoder)
             self.decoder = None

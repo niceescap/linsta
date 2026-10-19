@@ -1,0 +1,78 @@
+# STEP 2 ONLY: replace the bootstrap vhost, do not enable both examples.
+# Keep the certificate paths issued by certonly --webroot for this domain.
+upstream digger_demo_web {
+    server 127.0.0.1:17000;
+}
+limit_req_zone $binary_remote_addr zone=digger_demo_login:1m rate=5r/m;
+
+server {
+    listen 80;
+    server_name dig.hqwi.re;
+    access_log off;
+    auth_basic off;
+
+    # Keep HTTP-01 reachable for webroot renewals; no redirect on this location.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+        autoindex off;
+        disable_symlinks on;
+        allow all;
+        limit_except GET { deny all; }
+        try_files $uri =404;
+    }
+    location / {
+        return 301 https://dig.hqwi.re$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name dig.hqwi.re;
+    ssl_certificate /etc/letsencrypt/live/dig.hqwi.re/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/dig.hqwi.re/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # Public demo: explicitly disable any inherited global Basic Auth.
+    auth_basic off;
+    client_max_body_size 16m;
+    client_body_timeout 20s;
+    send_timeout 30s;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy same-origin always;
+    access_log off; # Avoid logging verification tokens, credentials or query strings.
+
+    # HLS intentionally closed, including now.json and temporary files.
+    location ^~ /hls/ { return 404; }
+    location ^~ /instance/ { return 404; }
+    location ^~ /storage/ { return 404; }
+    location ^~ /media/cover/ { return 404; }
+    location ~* \.(?:sqlite3?|db)(?:-(?:wal|shm|journal))?$ { return 404; }
+    location ~ /\. { deny all; }
+
+    # Inherited by both proxy locations; do not trust client-supplied forwarding.
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host dig.hqwi.re;
+    proxy_set_header X-Forwarded-Host dig.hqwi.re;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Port 443;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header Authorization "";
+    proxy_connect_timeout 3s;
+    proxy_read_timeout 35s;
+    proxy_send_timeout 35s;
+    proxy_request_buffering on;
+    proxy_cache off;
+
+    location = /login {
+        limit_req zone=digger_demo_login burst=3 nodelay;
+        limit_req_status 429;
+        proxy_pass http://digger_demo_web;
+    }
+
+    location / {
+        proxy_pass http://digger_demo_web;
+    }
+}

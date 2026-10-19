@@ -211,8 +211,16 @@ class PrivateRadioTests(unittest.TestCase):
                     with self.assertRaises(ValueError): radio.probe(self.root,progress_timeout=0)
 
     def test_real_engine_loops_synthetic_audio_and_produces_decodable_hls(self):
+        self._real_engine_loop()
+
+    def test_continuous_engine_survives_transition_wait_and_loops(self):
+        self._real_engine_loop(continuous=True)
+
+    def _real_engine_loop(self, continuous=False):
         self.imported()
         worker = radio.load_worker(self.root)
+        if continuous:
+            worker.HEALTH_TIMEOUT = 6  # Transition wait below exceeds this; production stays 20.
         metadata = []
         original_write = worker.write_state
         def record(track=None, *args, **kwargs):
@@ -223,13 +231,22 @@ class PrivateRadioTests(unittest.TestCase):
         class ThreeTracks(worker.Engine):
             count = 0
             def play(self,path):
+                if continuous and self.count == 2:
+                    before = (self_root/'hls/stream.m3u8').read_bytes()
+                    time.sleep(8)  # Model a decoder/validation disk wait at the loop boundary.
+                    after = (self_root/'hls/stream.m3u8').read_bytes()
+                    if before == after:
+                        raise AssertionError('HLS stopped progressing during the transition wait')
                 result = super().play(path)
+                if continuous and not result:
+                    raise AssertionError('Synthetic track did not complete before bounded stop')
                 self.count += 1
                 if self.count == 3:
                     worker.STOP = True
                 return result
-        engine = ThreeTracks(threads=1)
-        radio.play_loop(self.root,worker,seconds=25,engine=engine)
+        self_root = self.root
+        engine = ThreeTracks(threads=1,continuous=continuous)
+        radio.play_loop(self.root,worker,seconds=40 if continuous else 25,engine=engine)
         with sqlite3.connect(self.root/'catalogue.sqlite') as conn:
             played = conn.execute('SELECT track_id,ended_at FROM private_plays ORDER BY id').fetchall()
         self.assertGreaterEqual(len(played),3)
@@ -247,6 +264,7 @@ class PrivateRadioTests(unittest.TestCase):
         self.assertEqual((audio[0]['codec_name'],audio[0]['sample_rate'],audio[0]['channels']),('aac','44100',2))
         self.assertIsNone(engine.encoder)
         self.assertIsNone(engine.decoder)
+        self.assertIsNone(engine.pump)
 
 
 if __name__ == '__main__':

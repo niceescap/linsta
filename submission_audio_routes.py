@@ -88,6 +88,14 @@ def create_audio_blueprint(connection_factory,roots_factory,login_required,admin
         flash('MP3, cover et déclarations enregistrés. Une seconde validation administrative est obligatoire.','success')
         return redirect(url_for('.show',submission_id=submission_id),code=303)
 
+    @bp.get('/submissions/<int:submission_id>/audio/conditions')
+    @login_required
+    def conditions(submission_id):
+        # Informational only: no authorization registry, acceptance or state writes.
+        with service() as audio_service:
+            audio_service.get(g.current_user['id'],submission_id)
+        return render_template('submission_conditions_v03.html', submission_id=submission_id)
+
     @bp.get('/admin/submissions/<int:submission_id>/audio')
     @admin_required
     def review_page(submission_id):

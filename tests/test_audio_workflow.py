@@ -7,6 +7,8 @@ which explicitly patch the otherwise empty rights registry.
 import concurrent.futures
 import hashlib
 import io
+from html.parser import HTMLParser
+import re
 from pathlib import Path
 import sqlite3
 import shutil
@@ -120,8 +122,57 @@ class AudioWorkflowTests(unittest.TestCase):
         for field in ('audio','cover','music_accepted','visual_accepted','csrf_token','document_sha256'):
             self.assertIn('name="'+field+'"',text)
         self.assertNotIn('checked',text)
-        self.assertIn('brouillon technique',text)
+        self.assertIn('Version bêta — Conditions de diffusion en cours de validation juridique',text)
+        self.assertIn(rights.DRAFT_DOCUMENT.music_clause,text)
+        self.assertIn(rights.DRAFT_DOCUMENT.visual_clause,text)
+        self.assertIn('n’est pas le document accepté',text)
         self.assertNotIn('i.ytimg.com',text)
+
+    def test_informational_conditions_preserve_full_v03_and_current_consent(self):
+        sid=self.accepted()
+        before=[line for line in self.conn.iterdump()]
+        page=self.get(f'/submissions/{sid}/audio')
+        form=page.get_data(as_text=True)
+        conditions_url=f'/submissions/{sid}/audio/conditions'
+        self.assertIn(f'href="{conditions_url}"',form)
+        self.assertIn('Consulter les conditions de diffusion',form)
+        self.assertIn('value="draft-media-v1"',form)
+        self.assertIn('value="'+rights.DRAFT_DOCUMENT.sha256+'"',form)
+        self.assertIn('Je confirme explicitement la déclaration musicale du document affiché pour le MP3 déposé.',form)
+        self.assertIn('Je confirme explicitement la déclaration visuelle du même document pour la cover déposée.',form)
+        self.assertEqual(form.count('type="checkbox"'),2)
+        self.assertNotIn('checked',form)
+        response=self.get(conditions_url)
+        self.assertEqual(response.status_code,200)
+        text=response.get_data(as_text=True)
+        self.assertIn('Version bêta — Document en cours de validation juridique',text)
+        self.assertIn(f'href="/submissions/{sid}/audio"',text)
+        self.assertIn('Retour au dépôt',text)
+        self.assertEqual(text.count('<h3>'),11)
+        self.assertNotIn('<form',text)
+        self.assertNotIn('type="checkbox"',text)
+        class PlainText(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.parts=[]
+            def handle_data(self,data): self.parts.append(data)
+        parser=PlainText()
+        parser.feed(re.search(r'<article id="contract-v03">(.*?)</article>',text,re.S).group(1))
+        original=(Path(__file__).resolve().parents[1]/'documents/digger-radio-v0.3.md').read_text()
+        original=re.sub(r'(?m)^(?:#{1,3} |- )','',original).replace('**','')
+        self.assertEqual(' '.join(''.join(parser.parts).split()),' '.join(original.split()))
+        self.assertEqual(response.headers['Cache-Control'],'no-store')
+        self.assertEqual([line for line in self.conn.iterdump()],before)
+        self.assertEqual(rights.DRAFT_DOCUMENT.version,'draft-media-v1')
+        self.assertFalse(rights.document_is_production_ready(rights.DRAFT_DOCUMENT.version,
+            rights.DRAFT_DOCUMENT.text,rights.DRAFT_DOCUMENT.sha256))
+
+    def test_informational_conditions_require_verified_owner(self):
+        sid=self.accepted()
+        for uid,expected in ((None,401),(3,403),(2,404)):
+            with self.client.session_transaction(base_url=self.base) as session: session.clear()
+            if uid: self.session_user(uid)
+            self.assertEqual(self.get(f'/submissions/{sid}/audio/conditions').status_code,expected)
 
     def test_permissions_precede_multipart_parsing(self):
         sid=self.accepted()

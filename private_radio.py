@@ -251,7 +251,7 @@ document.querySelector('#now').textContent=(d.title||'Waiting')+' - '+(d.artist|
 
 def play_loop(root, worker, *, seconds, engine=None):
     playlist = tracks(root)
-    engine = engine or worker.Engine(threads=1)
+    engine = engine or worker.Engine(threads=1, continuous=True)
     timer = threading.Timer(seconds, lambda:setattr(worker,'STOP',True))
     timer.start()
     conn = connect(root)
