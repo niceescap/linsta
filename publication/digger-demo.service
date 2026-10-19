@@ -1,0 +1,34 @@
+# USER unit proposal. Do not install/start/enable without explicit authorization.
+[Unit]
+Description=Digger Radio contributions web (public HLS closed)
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=exec
+WorkingDirectory=/home/jean/digger/instance/releases/digger-web
+Environment=DIGGER_DEMO_SETTINGS=/home/jean/.config/digger-demo/settings.json
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=DIGGER_DATA_ROOT=/home/jean/digger/instance/demo
+Environment=DIGGER_ENV_FILE=/home/jean/digger/.env
+UnsetEnvironment=GUNICORN_CMD_ARGS PYTHONPATH PYTHONHOME FLASK_APP FLASK_DEBUG
+ExecStart=/home/jean/digger/instance/demo/venv/bin/python -B -m gunicorn --config demo/gunicorn.conf.py --bind 127.0.0.1:17000 --workers 1 --threads 1 --worker-class sync --timeout 30 --graceful-timeout 15 --max-requests 500 --max-requests-jitter 50 --keep-alive 2 --worker-tmp-dir /home/jean/digger/instance/demo --error-logfile - --name digger-web digger_web:application
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=25
+UMask=0077
+NoNewPrivileges=yes
+Nice=10
+LimitNOFILE=256
+MemoryHigh=512M
+MemoryMax=768M
+CPUQuota=50%
+TasksMax=16
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=digger-demo
+
+[Install]
+WantedBy=default.target

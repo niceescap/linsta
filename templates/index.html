@@ -32,13 +32,13 @@
         <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
       </div>
       <div class="controls">
-        <button id="playBtn" class="play-btn" type="button" aria-label="Écouter le direct" aria-pressed="false">▶</button>
+        <button id="playBtn" class="play-btn" type="button" aria-label="Écouter le direct" aria-pressed="false" {% if not radio_enabled|default(true) %}disabled{% endif %}>▶</button>
       </div>
       <div class="volume">
         <label for="volumeInput">Volume</label>
         <input id="volumeInput" type="range" min="0" max="100" value="80">
       </div>
-      <audio id="player" data-stream-url="/hls/stream.m3u8" preload="none" playsinline style="display:none"></audio>
+      <audio id="player" data-stream-url="/hls/stream.m3u8" data-live-enabled="{{ 'true' if radio_enabled|default(true) else 'false' }}" preload="none" playsinline style="display:none"></audio>
     </section>
 
     <section class="card" style="margin-top:24px;background:var(--bg-soft);border:1px solid var(--border);padding:20px;border-radius:12px">

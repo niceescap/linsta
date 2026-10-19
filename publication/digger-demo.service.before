@@ -1,0 +1,32 @@
+# USER unit proposal. Do not install/start/enable without explicit authorization.
+[Unit]
+Description=Digger Radio isolated demo web (no HLS)
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=exec
+WorkingDirectory=/home/jean/digger
+Environment=DIGGER_DEMO_SETTINGS=/home/jean/.config/digger-demo/settings.json
+Environment=PYTHONDONTWRITEBYTECODE=1
+UnsetEnvironment=GUNICORN_CMD_ARGS PYTHONPATH PYTHONHOME FLASK_APP FLASK_DEBUG
+ExecStart=/home/jean/digger/instance/demo/venv/bin/python -B -m demo.manage serve
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=25
+UMask=0077
+NoNewPrivileges=yes
+Nice=10
+LimitNOFILE=256
+MemoryHigh=512M
+MemoryMax=768M
+CPUQuota=50%
+TasksMax=16
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=digger-demo
+
+[Install]
+WantedBy=default.target

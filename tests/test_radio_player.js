@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../static/js/radio.js'), 'utf8');
 
-function fixture(native) {
+function fixture(native, liveEnabled = true) {
   const elements = {};
   for (const id of ['player', 'playBtn', 'np-cover', 'np-title', 'np-artist', 'progressFill', 'volumeInput', 'player-status']) {
     elements[id] = {listeners: {}, attrs: {}, dataset: {}, style: {}, paused: true,
@@ -13,6 +13,7 @@ function fixture(native) {
       getAttribute(key) { return key === 'src' ? this.src : this.attrs[key]; }};
   }
   const audio = elements.player;
+  audio.dataset.liveEnabled = String(liveEnabled);
   let calls = 0;
   audio.canPlayType = () => native ? 'probably' : '';
   audio.play = async () => { calls++; throw Error('Safari denied playback'); };
@@ -39,6 +40,17 @@ function fixture(native) {
 }
 
 (async () => {
+  for (const native of [true, false]) {
+    const closed = fixture(native, false);
+    await new Promise(setImmediate);
+    assert.equal(closed.instances.length, 0);
+    assert.equal(closed.audio.src, undefined);
+    assert.equal(closed.elements.playBtn.disabled, true);
+    closed.elements.playBtn.listeners.click();
+    closed.audio.listeners.error();
+    assert.equal(closed.calls(), 0);
+    assert.equal(closed.timers.length, 0);
+  }
   for (const native of [true, false]) {
     const f = fixture(native);
     await new Promise(setImmediate);

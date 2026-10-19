@@ -1,0 +1,14 @@
+--- /home/jean/.config/systemd/user/digger-demo.service
++++ /home/jean/.config/systemd/user/digger-demo.service
+@@ -3 +3 @@
+-Description=Digger Radio isolated demo web (no HLS)
++Description=Digger Radio contributions web (public HLS closed)
+@@ -9 +9 @@
+-WorkingDirectory=/home/jean/digger
++WorkingDirectory=/home/jean/digger/instance/releases/digger-web
+@@ -11,0 +12,2 @@
++Environment=DIGGER_DATA_ROOT=/home/jean/digger/instance/demo
++Environment=DIGGER_ENV_FILE=/home/jean/digger/.env
+@@ -13 +15 @@
+-ExecStart=/home/jean/digger/instance/demo/venv/bin/python -B -m demo.manage serve
++ExecStart=/home/jean/digger/instance/demo/venv/bin/python -B -m gunicorn --config demo/gunicorn.conf.py --bind 127.0.0.1:17000 --workers 1 --threads 1 --worker-class sync --timeout 30 --graceful-timeout 15 --max-requests 500 --max-requests-jitter 50 --keep-alive 2 --worker-tmp-dir /home/jean/digger/instance/demo --error-logfile - --name digger-web digger_web:application

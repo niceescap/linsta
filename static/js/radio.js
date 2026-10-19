@@ -9,6 +9,7 @@
   const volumeInput = document.getElementById('volumeInput');
   const status = document.getElementById('player-status');
   const SRC = audio.dataset.streamUrl || '/hls/stream.m3u8';
+  const liveEnabled = audio.dataset.liveEnabled !== 'false';
   const FALLBACK = '/static/digger-icon.png';
   let hls = null;
   let retryTimer = null;
@@ -38,6 +39,7 @@
   }
 
   function retry() {
+    if (!liveEnabled) return;
     message('Flux indisponible — nouvelle tentative…');
     if (retryTimer !== null) return;
     retryTimer = setTimeout(() => {
@@ -62,6 +64,7 @@
   }
 
   playBtn?.addEventListener('click', () => {
+    if (!liveEnabled) return;
     if (audio.paused) {
       wantsPlayback = true;
       play();
@@ -105,7 +108,12 @@
     } catch (_) { /* A failed metadata request must not interrupt audio. */ }
   }
 
-  attach();
+  if (liveEnabled) {
+    attach();
+  } else {
+    if (playBtn) playBtn.disabled = true;
+    message('Le direct n’est pas encore ouvert.');
+  }
   updatePlayIcon();
   refresh();
   setInterval(refresh, 5000);
