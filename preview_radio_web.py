@@ -231,6 +231,7 @@ def create_preview_blueprint(login_required, admin_required):
         state = health(root(), controller())
         result = {k: state[k] for k in ('status', 'available', 'message')}
         result['track_id'] = None
+        result.update(next_track_id=None, next_title=None, next_artist=None, next_cover_url=None)
         if state['available']:
             try:
                 data = json.loads(read_small(root() / 'hls', 'now.json', 65536)[0])
@@ -243,6 +244,17 @@ def create_preview_blueprint(login_required, admin_required):
                         result.update(track_id=row['id'], title=row['title'], artist=row['artist'],
                             duration=row['duration'], elapsed=max(0, time.time() - data['started_at']),
                             cover_url=url_for('.cover', track_id=row['id']))
+                        # Only the engine's published selection is accepted. Do
+                        # not reconstruct the queue from DB order in a request.
+                        if type(data.get('next_track_id')) is int:
+                            try:
+                                following = track(root(), data['next_track_id'])
+                                if following['enabled'] and following['removed_at'] is None:
+                                    result.update(next_track_id=following['id'], next_title=following['title'],
+                                        next_artist=following['artist'],
+                                        next_cover_url=url_for('.cover', track_id=following['id']))
+                            except (PreviewError, sqlite3.Error):
+                                pass  # A missing/old next item never invalidates the current track.
             except (OSError, ValueError, TypeError, StorageError):
                 pass
         return jsonify(result)

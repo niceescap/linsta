@@ -56,7 +56,7 @@ def get_next_track(last_genre_slug):
         db.close()
 
 
-def write_state(track=None, started_at=None, duration=0, message=None):
+def write_state(track=None, started_at=None, duration=0, message=None, *, next_track=None):
     state = {
         "track_id": track["id"] if track else None,
         "title": track["title"] if track else None,
@@ -65,6 +65,9 @@ def write_state(track=None, started_at=None, duration=0, message=None):
         "started_at": started_at,
         "duration": duration or 0,
         "updated_at": time.time(),
+        "next_track_id": next_track["id"] if next_track else None,
+        "next_title": next_track["title"] if next_track else None,
+        "next_artist": next_track["artist"] if next_track else None,
     }
     if message:
         state["message"] = message

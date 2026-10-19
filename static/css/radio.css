@@ -36,3 +36,16 @@ button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(-
 .ok{color:#a9d99a}.err{color:#ffb2a8}
 @media(prefers-reduced-motion:reduce){.live-dot{animation:none}}
 @media(min-width:768px){.title{font-size:1.8rem}}
+
+.next-track{max-width:420px;margin:24px auto;border-top:1px solid var(--border);padding-top:16px}
+.next-track[hidden]{display:none}
+.next-label{color:var(--gold);font-size:.7rem;letter-spacing:.15em;margin-bottom:10px}
+.next-details{display:flex;align-items:center;gap:12px;overflow-wrap:anywhere}
+.next-details img{width:48px;height:48px;object-fit:cover;border-radius:6px}
+.audio-meter{max-width:420px;margin:24px auto 12px;display:grid;gap:8px}
+.vu-channel{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:.7rem}
+.vu-channel[hidden]{display:none}
+.vu-channel span{min-width:3em}
+.vu-track{height:7px;flex:1;background:rgba(217,164,65,.08);overflow:hidden;border-radius:2px}
+.vu-fill{height:100%;background:linear-gradient(90deg,var(--gold),var(--orange));transform:scaleX(0);transform-origin:left}
+.audio-meter small{font-size:.7rem}

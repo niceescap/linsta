@@ -4,9 +4,9 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../static/js/radio.js'), 'utf8');
 
-function fixture(native, loggedIn = true) {
+function fixture(native, loggedIn = true, brokenMeter = false) {
   const elements = {};
-  for (const id of ['player', 'playBtn', 'np-cover', 'np-title', 'np-artist', 'progressFill', 'volumeInput', 'player-status']) {
+  for (const id of ['player', 'playBtn', 'np-cover', 'np-title', 'np-artist', 'progressFill', 'volumeInput', 'player-status', 'next-track', 'next-title', 'next-artist', 'next-cover']) {
     elements[id] = {listeners: {}, attrs: {}, dataset: {}, style: {}, paused: true,
       addEventListener(event, fn) { this.listeners[event] = fn; },
       setAttribute(key, value) { this.attrs[key] = value; },
@@ -35,7 +35,7 @@ function fixture(native, loggedIn = true) {
   let state = {available: false, track_id: null, message: 'Radio PREVIEW arrêtée.'};
   let status = 200;
   let refresh;
-  vm.runInNewContext(source, {document: {getElementById: id => elements[id]}, window: {Hls}, Hls,
+  vm.runInNewContext(source, {document: {getElementById: id => elements[id]}, window: {Hls, DiggerAudioMeter: brokenMeter ? () => ({onGesture(){throw Error('meter failure');},reset(){throw Error('meter failure');},pause(){throw Error('meter failure');}}) : undefined}, Hls,
     fetch: async (url, options) => {
       calls.fetch.push({url, options});
       return {ok: status === 200, status, json: async () => state};
@@ -49,6 +49,12 @@ function fixture(native, loggedIn = true) {
 
 (async () => {
   for (const native of [true, false]) {
+    const broken = fixture(native, true, true);
+    await new Promise(setImmediate);
+    await broken.refresh({available: true, track_id: 1});
+    broken.elements.playBtn.listeners.click();
+    await new Promise(setImmediate);
+    assert.equal(broken.calls.play, 1, "a failing meter cannot block native HLS or hls.js");
     const anon = fixture(native, false);
     await new Promise(setImmediate);
     assert.equal(anon.calls.fetch.length, 0);
@@ -66,8 +72,11 @@ function fixture(native, loggedIn = true) {
     assert.equal(f.calls.fetch[0].url, '/preview-radio/now-playing');
     assert.equal(f.calls.fetch[0].options.credentials, 'same-origin');
     await f.refresh({available: true, track_id: 1, title: 'Private track', artist: 'Artist',
-      duration: 10, elapsed: 2, cover_url: '/preview-radio/tracks/1/cover'});
+      next_track_id: 2, next_title: 'Next real', next_artist: 'Next artist', next_cover_url: '/preview-radio/tracks/2/cover', duration: 10, elapsed: 2, cover_url: '/preview-radio/tracks/1/cover'});
     assert.equal(f.audio.src, undefined, 'ready state never triggers automatic audio load');
+    assert.equal(f.elements['next-title'].textContent, 'Next real');
+    assert.equal(f.elements['next-track'].hidden, false);
+    assert.match(f.elements['player-status'].textContent, /Appuyez sur Play pour écouter/);
     f.elements.playBtn.listeners.click();
     await new Promise(setImmediate);
     assert.equal(f.calls.play, 1);
@@ -76,6 +85,15 @@ function fixture(native, loggedIn = true) {
     else assert.equal(f.instances[0].src, '/preview-radio/hls/stream.m3u8');
     assert.equal(f.elements['np-cover'].src, '/preview-radio/tracks/1/cover');
     assert.match(f.elements['player-status'].textContent, /PREVIEW \/ TEST/);
+    f.elements.playBtn.listeners.click();
+    assert.equal(f.audio.paused, true);
+    f.elements.playBtn.listeners.click();
+    await new Promise(setImmediate);
+    await f.refresh({available: true, track_id: 2, title: 'Next real', artist: 'Next artist', next_track_id: 3, next_title: 'Third'});
+    assert.equal(f.elements['np-title'].textContent, 'Next real');
+    assert.equal(f.elements['next-title'].textContent, 'Third');
+    await f.refresh({available: true, track_id: 2, title: 'Next real'});
+    assert.equal(f.elements['next-track'].hidden, true);
     if (native) f.audio.listeners.error();
     else f.instances[0].error(null, {fatal: true});
     assert.equal(f.timers.length, 1);
@@ -85,9 +103,9 @@ function fixture(native, loggedIn = true) {
     assert.equal(f.calls.load, 1);
     assert.equal(f.calls.cleared.length, 1);
     f.timers[0](); // Even a dispatched callback cannot restart a stopped stream.
-    assert.equal(f.calls.play, 1);
+    assert.equal(f.calls.play, 2);
     f.elements.playBtn.listeners.click();
-    assert.equal(f.calls.play, 1);
+    assert.equal(f.calls.play, 2);
     await f.refresh({}, 401);
     assert.match(f.elements['player-status'].textContent, /Reconnectez-vous/);
   }

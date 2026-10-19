@@ -260,14 +260,17 @@ def play_loop(root, worker, *, seconds, engine=None):
         worker.clear_hls_dir()
         engine.start()
         while not worker.STOP:
-            for track in playlist:
+            for index, track in enumerate(playlist):
                 if worker.STOP:
                     break
                 validate_file(root,track['filename'],digest=track['sha256'],size=track['size'])
                 current = conn.execute('INSERT INTO private_plays(track_id) VALUES (?)',(track['id'],)).lastrowid
                 conn.commit()
+                # This is the actual ordered playback list held under the lock,
+                # including the wrap-around (or the same track for a single item).
+                next_track = playlist[(index + 1) % len(playlist)]
                 worker.write_state(dict(id=track['id'],title=track['title'],artist=track['artist'],genre_slug='private-test'),
-                                   time.time(),track['duration'])
+                                   time.time(),track['duration'],next_track=next_track)
                 if not engine.play(str(root/track['filename'])) and not worker.STOP:
                     raise ValueError('Private track decode failed; stopped instead of silently approving other media')
                 conn.execute('UPDATE private_plays SET ended_at=CURRENT_TIMESTAMP WHERE id=?',(current,))

@@ -77,6 +77,27 @@ class PreviewRoutesTests(unittest.TestCase):
         self.controller.state = 'active'
         return started
 
+    def test_current_and_engine_selected_next_transition_and_absence(self):
+        self.session_user(1)
+        started = self.publish()
+        path = self.root / 'hls/now.json'
+        for current, following in ((1, 26), (26, 2), (2, None), (2, 999)):
+            path.write_text(json.dumps({'track_id': current, 'started_at': started + .5,
+                                       'next_track_id': following}))
+            data = self.get('/preview-radio/now-playing').get_json()
+            self.assertEqual(data['track_id'], current)
+            expected = following if following in (26, 2) else None
+            self.assertEqual(data['next_track_id'], expected)
+            self.assertEqual(data['next_title'], f'Track {expected}' if expected else None)
+            self.assertEqual(data['next_artist'], 'Private artist' if expected else None)
+            if expected:
+                self.assertIn(f'/tracks/{expected}/cover', data['next_cover_url'])
+            self.assertNotIn('queue', data)
+        self.controller.state = 'inactive'
+        data = self.get('/preview-radio/now-playing').get_json()
+        self.assertIsNone(data['track_id'])
+        self.assertIsNone(data['next_track_id'])
+
     def test_anonymous_cannot_read_any_private_route_or_control_service(self):
         for path in ('/admin/preview-radio', '/preview-radio/tracks/1/audio',
                      '/preview-radio/tracks/1/cover', '/preview-radio/hls/stream.m3u8',
