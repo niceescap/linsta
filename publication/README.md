@@ -21,25 +21,35 @@ n'existe pas ici ; ne pas passer directement à `app:app` avec `config.py`.
 
 Le bootstrap n'initialise/migre aucune DB et refuse un registre incomplet.
 Le mode démo historique conserve ses restrictions et son comportement par défaut.
-La vraie entrée utilise les templates normaux, laisse passer OAuth et garde la
+La vraie entrée utilise les templates normaux, permet le login local et garde la
 radio et les covers publiques fermées dans Flask comme dans Nginx. Les previews
 MP3/cover des contributeurs et administrateurs restent privées et accessibles.
 Aucun worker n'est lancé, aucun document juridique n'est activé.
 
-## Prérequis OAuth à résoudre avant bascule
+## Preview avec comptes locaux, OAuth facultatif
 
-Le fichier `/home/jean/digger/.env` n'existe pas à l'inspection (contenu non lu).
-Aucune valeur de secret ni environnement du manager systemd n'a été inspecté.
-La disponibilité de GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET pour le service reste
-**non vérifiée**. La nouvelle entrée refuse de démarrer s'ils sont absents.
+La preview démarre sans Google. L'unité préparée impose
+`DIGGER_GOOGLE_OAUTH_ENABLED=0`. Aucun `.env` ni credential Google générique
+n'est chargé : les paramètres d'un autre service ne sont jamais réutilisés.
+Le futur OAuth Digger sera séparé, créé par l'exploitant avec le compte dev Digger.
+Il nécessitera une activation explicite et `DIGGER_GOOGLE_CLIENT_ID` /
+`DIGGER_GOOGLE_CLIENT_SECRET` dédiés. Sans configuration complète, la preview
+reste disponible, le bouton Google est masqué et les routes OAuth répondent 503.
 
-Nico doit confirmer leur fourniture par l'environnement du service ou la
-configuration opérateur prévue, ainsi que l'URI de redirection autorisée
-`https://dig.hqwi.re/auth/callback`. Ne pas mettre de credentials dans Git,
-une commande partagée, le descriptif de PR ou les journaux.
-Le fichier de configuration n'est jamais créé/modifié par notre code.
-Les paramètres YouTube/Spotify sont conservés s'ils sont fournis ; Spotify reste
-désactivé par défaut. Aucun appel fournisseur réel n'a été fait dans les tests.
+`/login/local` utilise le POST JSON `/login` existant, avec CSRF et les contrôles
+de compte vérifié/rôle. Les inscriptions publiques restent désactivées ; les
+comptes de test sont créés par l'opérateur. Le hash utilise
+`werkzeug.security.generate_password_hash`, vérifié par `check_password_hash`.
+Aucun mot de passe de test n'est consigné dans Git ou dans ce document.
+Les paramètres YouTube/Spotify peuvent être fournis séparément ; Spotify est
+désactivé par défaut et la saisie manuelle demeure disponible.
+
+Compte de test créé sur demande : `nico-test@example.invalid`, nom `nico-test`,
+rôle `contributor`, compte vérifié, aucun lien Google et aucun privilège admin.
+Une sauvegarde SQLite a précédé l'unique INSERT dans `users` ; aucun compte
+existant n'a été modifié. Seul un hash Werkzeug est enregistré en DB. Le nouveau
+mot de passe a été remis dans un fichier privé 0600 hors Git, sans affichage.
+Cette création de compte n'est pas une migration de schéma.
 
 ## Unité proposée, non installée
 
@@ -50,7 +60,7 @@ est conservée dans `digger-demo.service.before` pour la procédure de retour.
 Le service actuel reste actif sur son ancienne entrée ; aucun daemon-reload ni
 restart n'a été fait. Aucun changement Nginx n'est nécessaire.
 
-## Procédure future, après validation de la configuration OAuth
+## Procédure future, après validation opérateur de la preview
 
 Ces commandes sont des instructions pour l'opérateur, elles n'ont pas été exécutées.
 
@@ -65,9 +75,9 @@ ss -ltn | rg '127\.0\.0\.1:17000'
 ```
 
 Attendus HTTPS après démarrage : accueil 200 avec assets Digger et lecture
-fermée ; `/login/google` 302 vers Google (sans afficher URL/tokens dans les logs),
+fermée ; `/login/local` 200 ; `/login/google` et `/auth/callback` 503,
 `/submissions` et `/admin` 401 sans session ; `/hls/stream.m3u8` et
-`/media/cover/1` 404. Vérifier dans Safari connexion et callback, propositions
+`/media/cover/1` 404. Vérifier dans Safari connexion locale, propositions
 YouTube/Spotify et saisie manuelle, décision admin, upload MP3+cover et previews
 privées. Confirmer le blocage juridique final. Ne pas redémarrer Linsta/nicee.
 
@@ -81,15 +91,15 @@ systemctl --user restart digger-demo.service
 
 ## Tests isolés
 
-Résultat : 416 tests collectés, 415 réussis et 1 HTTP privé opt-in ignoré en
-55,413 s. Les 6 tests de publication ont ensuite été réexécutés avec succès,
-notamment pour confirmer le callback HTTPS réel derrière les headers Nginx.
+Résultat après adaptation aux comptes locaux : 420 tests collectés,
+419 réussis et 1 HTTP privé opt-in ignoré en 54,130 s. Les 51 tests ciblés
+(publication, sécurité Flask et démo historique) avaient également réussi.
 Les tests Node, le contrôle de syntaxe JavaScript, `git diff --check` et
 `systemd-analyze --user verify publication/digger-demo.service` passent.
 
 Utiliser `PYTHONPATH=.:tests` et le Python existant avec `-B`.
 Les tests de publication emploient une DB, des médias et des paramètres factices
-temporaires : vrai template, callback HTTPS derrière proxy, upload privé, revue,
-blocage légal, fermeture HLS/covers et refus de démarrer sans OAuth.
+temporaires : vrai template, login local, comportement OAuth optionnel, upload privé, revue,
+blocage légal, fermeture HLS/covers et démarrage normal sans OAuth.
 Les tests Node couvrent aussi l'absence de toute connexion HLS quand le direct
 est désactivé. Aucune validation OAuth réelle ou endurance audio n'est revendiquée.

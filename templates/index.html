@@ -69,7 +69,12 @@
       {% else %}
         <h2>Rejoindre Digger</h2>
         <p>Artiste ou créateur ? Connectez-vous pour proposer votre musique.</p>
+        {% if local_login_enabled|default(false) %}
+        <a class="btn" href="{{ url_for('local_login') }}">Se connecter avec un compte de test</a>
+        {% endif %}
+        {% if google_oauth_enabled|default(true) %}
         <a class="btn" href="/login/google">Se connecter avec Google</a>
+        {% endif %}
       {% endif %}
     </section>
   </main>

@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import re
 from unittest.mock import patch
 
 import db
@@ -30,12 +31,12 @@ class DiggerPublicationTests(unittest.TestCase):
         settings = root / 'settings.json'
         settings.write_text(json.dumps({'secret_key': '0123456789abcdef' * 4}))
         settings.chmod(0o600)
-        env_file = root / 'fake.env'
-        env_file.write_text('YOUTUBE_API_KEY=publication-test-key\n')
         environ = patch.dict(os.environ, {
             'DIGGER_DATA_ROOT': str(cls.data_root), 'DIGGER_DEMO_SETTINGS': str(settings),
-            'DIGGER_ENV_FILE': str(env_file), 'GOOGLE_CLIENT_ID': 'fake-google-client',
-            'GOOGLE_CLIENT_SECRET': 'fake-google-secret', 'SPOTIFY_METADATA_MODE': 'disabled',
+            'DIGGER_GOOGLE_OAUTH_ENABLED': '1', 'DIGGER_GOOGLE_CLIENT_ID': 'fake-google-client',
+            'DIGGER_GOOGLE_CLIENT_SECRET': 'fake-google-secret', 'SPOTIFY_METADATA_MODE': 'disabled',
+            'GOOGLE_CLIENT_ID': 'unrelated-must-not-be-used',
+            'GOOGLE_CLIENT_SECRET': 'unrelated-must-not-be-used',
         })
         environ.start()
         cls.addClassCleanup(environ.stop)
@@ -126,14 +127,60 @@ class DiggerPublicationTests(unittest.TestCase):
         self.assertFalse(rights.document_is_production_ready(rights.DRAFT_DOCUMENT.version,
             rights.DRAFT_DOCUMENT.text, rights.DRAFT_DOCUMENT.sha256))
 
-    def test_missing_oauth_fails_closed_without_creating_configuration(self):
+    def test_optional_oauth_ignores_generic_credentials_and_never_loads_dotenv(self):
         from demo import runtime
-        with patch.dict(sys.modules):
-            sys.modules.pop('config', None)
-            sys.modules.pop('app', None)
-            with patch.dict(os.environ, {'GOOGLE_CLIENT_ID': '', 'GOOGLE_CLIENT_SECRET': ''}), \
-                    self.assertRaisesRegex(RuntimeError, 'Google OAuth configuration is required'):
-                runtime.install_config(full_application=True, data_root=self.data_root)
+        for enabled, client_id, secret in (('0', 'dedicated', 'dedicated'), ('1', '', ''),
+                                           ('1', 'partial', ''), ('1', '', 'partial')):
+            with self.subTest(enabled=enabled, client_id=client_id), patch.dict(sys.modules):
+                sys.modules.pop('config', None)
+                sys.modules.pop('app', None)
+                with patch.dict(os.environ, {'DIGGER_GOOGLE_OAUTH_ENABLED': enabled,
+                        'DIGGER_GOOGLE_CLIENT_ID': client_id, 'DIGGER_GOOGLE_CLIENT_SECRET': secret,
+                        'DIGGER_ENV_FILE': '/must/not/be/read.env'}), \
+                        patch('dotenv.load_dotenv', side_effect=AssertionError('No dotenv access')):
+                    config = runtime.install_config(full_application=True, data_root=self.data_root)
+                self.assertEqual((config.GOOGLE_CLIENT_ID, config.GOOGLE_CLIENT_SECRET), ('', ''))
+
+    def test_disabled_google_is_hidden_and_both_routes_unavailable_without_network(self):
+        with patch.dict(self.app.config, {'GOOGLE_OAUTH_ENABLED': False}), \
+                patch.object(self.module.google, 'authorize_redirect', side_effect=AssertionError('No OAuth')), \
+                patch.object(self.module.google, 'authorize_access_token', side_effect=AssertionError('No OAuth')):
+            html = self.get('/').get_data(as_text=True)
+            self.assertNotIn('href="/login/google"', html)
+            self.assertIn('href="/login/local"', html)
+            for path in ('/login/google', '/auth/callback'):
+                response = self.get(path)
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json['code'], 'oauth_unavailable')
+
+    def test_local_login_uses_existing_json_endpoint_csrf_hash_and_contributor_role(self):
+        with patch.dict(self.app.config, {'GOOGLE_OAUTH_ENABLED': False}):
+            response = self.get('/login/local')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers['Cache-Control'], 'no-store')
+            html = response.get_data(as_text=True)
+            self.assertIn('type="password"', html)
+            token = re.search(r'name="csrf_token" value="([^"]+)"', html)[1]
+            self.assertEqual(self.post('/login', json={'email': 'user1@example.test',
+                'password': 'test-password'}).status_code, 400)
+            response = self.post('/login', json={'email': 'user1@example.test',
+                'password': 'test-password'}, headers={'X-CSRF-Token': token})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json['user']['role'], 'contributor')
+            self.assertEqual(self.get('/submissions').status_code, 200)
+            self.assertEqual(self.get('/admin').status_code, 403)
+
+    def test_local_login_refuses_invalid_password_and_unverified_account(self):
+        for email, password, expected in (('user1@example.test', 'wrong', 401),
+                                          ('user3@example.test', 'test-password', 403)):
+            response = self.post('/login', json={'email': email, 'password': password},
+                                 headers={'X-CSRF-Token': self.token()})
+            self.assertEqual(response.status_code, expected)
+
+    def test_preview_registration_stays_invitation_only(self):
+        response = self.post('/register', json={}, headers={'X-CSRF-Token': self.token()})
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.get('/verify/fake').status_code, 403)
 
     def test_uninitialized_data_root_is_not_created_or_migrated(self):
         from demo import runtime

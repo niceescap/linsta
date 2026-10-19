@@ -1,7 +1,7 @@
-"""Independent data/session configuration; demo never loads dotenv.
+"""Independent data/session configuration; never load dotenv or historical config.
 
-The full contribution entry point may read an explicitly configured operator
-dotenv at startup. This module never edits it or imports historical config.py.
+Preview OAuth is optional and accepts only explicitly enabled, Digger-specific
+credentials. Generic Google credentials from another service are never used.
 """
 import json
 import os
@@ -41,19 +41,6 @@ def install_config(*, full_application=False, data_root=None):
     check_paths(data_root=data_root)
     root = Path(data_root) if data_root is not None else ROOT
     database = root / 'digger.sqlite' if data_root is not None else DATABASE
-    if full_application:
-        # Read existing operator-managed configuration only at application startup.
-        # Never copy, create, edit or log its contents. An explicit path is needed
-        # because a release worktree does not contain the original .env.
-        from dotenv import load_dotenv
-        env_file = os.environ.get('DIGGER_ENV_FILE')
-        if env_file:
-            if not Path(env_file).is_absolute():
-                raise RuntimeError('DIGGER_ENV_FILE must be absolute')
-            load_dotenv(env_file, override=False)
-        if not all(os.environ.get(name, '').strip() for name in
-                   ('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET')):
-            raise RuntimeError('Google OAuth configuration is required; no credentials were logged')
     path = Path(os.environ.get('DIGGER_DEMO_SETTINGS',
                               '/home/jean/.config/digger-demo/settings.json'))
     if not path.is_absolute() or path.is_symlink():
@@ -92,14 +79,13 @@ def install_config(*, full_application=False, data_root=None):
                     SMTP_HOST='127.0.0.1', SMTP_PORT=1, SMTP_USER='', SMTP_PASSWORD='',
                     SMTP_FROM='demo@invalid.test', VERIFICATION_TOKEN_MAX_AGE=86400)
     if full_application:
-        settings.update(
-            GOOGLE_CLIENT_ID=os.environ['GOOGLE_CLIENT_ID'].strip(),
-            GOOGLE_CLIENT_SECRET=os.environ['GOOGLE_CLIENT_SECRET'].strip(),
-            SMTP_HOST=os.environ.get('TEM_SMTP_HOST', 'smtp.tem.scw.cloud'),
-            SMTP_PORT=int(os.environ.get('TEM_SMTP_PORT', '587')),
-            SMTP_USER=os.environ.get('TEM_SMTP_USER', ''),
-            SMTP_PASSWORD=os.environ.get('TEM_SMTP_PASSWORD', ''),
-            SMTP_FROM=os.environ.get('TEM_SMTP_FROM', 'no-reply@fu19.org'))
+        # No fallback to GOOGLE_CLIENT_* or another application's .env. Future
+        # Digger credentials require a separate, explicit operator opt-in.
+        if os.environ.get('DIGGER_GOOGLE_OAUTH_ENABLED', '0') == '1':
+            client_id = os.environ.get('DIGGER_GOOGLE_CLIENT_ID', '').strip()
+            client_secret = os.environ.get('DIGGER_GOOGLE_CLIENT_SECRET', '').strip()
+            if client_id and client_secret:
+                settings.update(GOOGLE_CLIENT_ID=client_id, GOOGLE_CLIENT_SECRET=client_secret)
     config.__dict__.update(settings)
     sys.modules['config'] = config
     return config
