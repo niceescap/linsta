@@ -275,10 +275,19 @@ class PrivateRadioTests(unittest.TestCase):
         with sqlite3.connect(self.root/'catalogue.sqlite') as conn:
             played = conn.execute('SELECT track_id,ended_at FROM private_plays ORDER BY id').fetchall()
         self.assertGreaterEqual(len(played),3)
-        self.assertEqual([p[0] for p in played[:3]],[1,2,1])
-        self.assertEqual(following[:3], [2, 1, 2])
+        ids = [p[0] for p in played[:3]]
+        self.assertEqual(set(ids[:2]), {1, 2})
+        self.assertEqual(ids[0], ids[2])
+        self.assertEqual(following[:2], ids[1:3])
+        self.assertNotEqual(following[2], ids[2])
         self.assertIsNone(json.loads((self.root/'hls/now.json').read_text())['next_track_id'])
-        self.assertEqual(metadata[:3],['Synthetic one','Synthetic two','Synthetic one'])
+        self.assertEqual(metadata[:3], [('Synthetic one' if i == 1 else 'Synthetic two') for i in ids])
+        timing = json.loads((self.root/'hls/timeline.json').read_text())
+        if continuous:
+            self.assertIsInstance(timing['origin'], float)
+            self.assertEqual([item['id'] for item in timing['tracks'][:3]], ids)
+            self.assertLess(timing['tracks'][0]['offset'], timing['tracks'][1]['offset'])
+            self.assertIn('#EXT-X-PROGRAM-DATE-TIME:', (self.root/'hls/stream.m3u8').read_text())
         self.assertTrue(all(p[1] for p in played))
         playlist = (self.root/'hls/stream.m3u8').read_text()
         segments = [line for line in playlist.splitlines() if radio.SEGMENT.fullmatch(line)]

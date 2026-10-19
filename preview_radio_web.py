@@ -231,10 +231,29 @@ def create_preview_blueprint(login_required, admin_required):
         state = health(root(), controller())
         result = {k: state[k] for k in ('status', 'available', 'message')}
         result['track_id'] = None
+        result['timing_available'] = False
         result.update(next_track_id=None, next_title=None, next_artist=None, next_cover_url=None)
         if state['available']:
             try:
                 data = json.loads(read_small(root() / 'hls', 'now.json', 65536)[0])
+                played_at = request.args.get('at')
+                timing = None
+                if played_at is not None:
+                    # Resolve the audible position, not the encoder's newer current track.
+                    at = float(played_at)
+                    if not math.isfinite(at) or not state['started_at'] - 5 <= at <= time.time() + 5:
+                        raise ValueError('Invalid playback date')
+                    timing = json.loads(read_small(root() / 'hls', 'timeline.json', 65536)[0])
+                    origin = timing['origin']
+                    if (not isinstance(origin, (int, float)) or not math.isfinite(origin)
+                            or timing['started_at'] < state['started_at']):
+                        raise ValueError('Timing from an old run')
+                    audible = [item for item in timing['tracks'] if origin + item['offset'] <= at]
+                    if not audible:
+                        raise ValueError('Playback timing not yet available')
+                    item = audible[-1]
+                    data = dict(track_id=item['id'], next_track_id=item['next_track_id'],
+                                started_at=origin + item['offset'])
                 if (isinstance(data, dict) and type(data.get('started_at')) in (int, float)
                         and math.isfinite(data['started_at'])
                         and data['started_at'] >= state['started_at']
@@ -244,6 +263,9 @@ def create_preview_blueprint(login_required, admin_required):
                         result.update(track_id=row['id'], title=row['title'], artist=row['artist'],
                             duration=row['duration'], elapsed=max(0, time.time() - data['started_at']),
                             cover_url=url_for('.cover', track_id=row['id']))
+                        if timing is not None:
+                            result.update(timing_available=True, playback_started_at=data['started_at'],
+                                          elapsed=max(0, at - data['started_at']))
                         # Only the engine's published selection is accepted. Do
                         # not reconstruct the queue from DB order in a request.
                         if type(data.get('next_track_id')) is int:
@@ -255,7 +277,7 @@ def create_preview_blueprint(login_required, admin_required):
                                         next_cover_url=url_for('.cover', track_id=following['id']))
                             except (PreviewError, sqlite3.Error):
                                 pass  # A missing/old next item never invalidates the current track.
-            except (OSError, ValueError, TypeError, StorageError):
+            except (OSError, ValueError, TypeError, KeyError, StorageError):
                 pass
         return jsonify(result)
 

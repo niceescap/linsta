@@ -12,18 +12,6 @@
   const nextTitle = document.getElementById('next-title');
   const nextArtist = document.getElementById('next-artist');
   const nextCover = document.getElementById('next-cover');
-  const noopMeter = {onGesture() {}, playing() {}, pause() {}, reset() {}};
-  let meter = noopMeter;
-  try {
-    if (audio.dataset.preview === 'true' && window.DiggerAudioMeter) {
-      meter = window.DiggerAudioMeter(audio, {
-        root: document.getElementById('audio-meter'), left: document.getElementById('vu-left'),
-        right: document.getElementById('vu-right'), leftLabel: document.getElementById('vu-left-label'),
-        rightChannel: document.getElementById('vu-right-channel'), status: document.getElementById('vu-status')
-      });
-    }
-  } catch (_) { meter = noopMeter; }
-  function meterCall(method) { try { meter[method](); } catch (_) {} }
   function updateNext(data = {}) {
     if (!nextBlock) return;
     nextBlock.hidden = !data.next_track_id;
@@ -41,6 +29,8 @@
   let wantsPlayback = false;
   let ready = !previewMode;
   let attached = false;
+  let metadata = null;
+  let fetching = false;
   let previewMessage = 'Radio PREVIEW en attente de son état…';
 
   function message(text) {
@@ -61,7 +51,6 @@
       message(previewMode ? 'Lecture PREVIEW / TEST.' : 'Lecture du direct.');
     } catch (_) {
       wantsPlayback = false;
-      meterCall('pause');
       message('Lecture indisponible. Appuyez sur lecture pour réessayer.');
     }
     updatePlayIcon();
@@ -69,7 +58,6 @@
 
   function retry() {
     if (!liveEnabled || !ready || (previewMode && !wantsPlayback)) return;
-    meterCall('pause');
     message('Flux indisponible — nouvelle tentative…');
     if (retryTimer !== null) return;
     retryTimer = setTimeout(() => {
@@ -103,7 +91,6 @@
     if (audio.paused) {
       wantsPlayback = true;
       if (previewMode) attach(); // Same user gesture as play(): Safari native HLS.
-      meterCall('onGesture');
       play();
     } else {
       wantsPlayback = false;
@@ -111,9 +98,9 @@
     }
   });
   audio.addEventListener('play', updatePlayIcon);
-  audio.addEventListener('pause', () => { meterCall('pause'); updatePlayIcon(); });
-  audio.addEventListener('playing', () => meterCall('playing'));
-  for (const event of ['waiting', 'stalled', 'ended']) audio.addEventListener(event, () => meterCall('pause'));
+  audio.addEventListener('pause', updatePlayIcon);
+  audio.addEventListener('timeupdate', renderProgress);
+  audio.addEventListener('seeked', () => { renderProgress(); if (previewMode) refresh(); });
   nextCover?.addEventListener('error', () => { if (nextCover.src !== FALLBACK) nextCover.src = FALLBACK; });
   audio.addEventListener('error', retry);
   volumeInput?.addEventListener('input', event => { audio.volume = event.target.value / 100; });
@@ -122,10 +109,46 @@
     if (cover.getAttribute('src') !== FALLBACK) cover.src = FALLBACK;
   });
 
-  async function refresh() {
-    if (previewMode && !liveEnabled) return;
+  function playbackDate() {
     try {
-      const response = await fetch(metadataURL, { cache: 'no-store', credentials: 'same-origin' });
+      if (hls && hls.playingDate) {
+        const date = hls.playingDate.getTime() / 1000;
+        if (Number.isFinite(date)) return date;
+      }
+      if (typeof audio.getStartDate === 'function' && Number.isFinite(audio.currentTime)) {
+        const start = audio.getStartDate().getTime() / 1000;
+        if (Number.isFinite(start)) return start + audio.currentTime;
+      }
+    } catch (_) {}
+    return null; // Never substitute the browser wall clock for audible time.
+  }
+  function formatTime(value) {
+    if (!Number.isFinite(value)) return '--:--';
+    const seconds = Math.floor(Math.max(0, value));
+    return String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
+  }
+  function renderProgress() {
+    const duration = metadata ? Number(metadata.duration) : NaN;
+    const at = playbackDate();
+    const known = !previewMode || (metadata?.timing_available === true && at !== null);
+    const elapsed = known && metadata ? (previewMode ? at - metadata.playback_started_at : Number(metadata.elapsed)) : NaN;
+    const valid = Number.isFinite(duration) && duration > 0;
+    const clamped = valid && Number.isFinite(elapsed) ? Math.max(0, Math.min(duration, elapsed)) : NaN;
+    for (const [id, value] of [['track-elapsed', clamped], ['track-duration', valid ? duration : NaN],
+                              ['track-remaining', valid ? duration - clamped : NaN]]) {
+      const element = document.getElementById(id);
+      if (element) element.textContent = formatTime(value);
+    }
+    if (progressFill) progressFill.style.width = valid && Number.isFinite(clamped) ? clamped / duration * 100 + '%' : '0%';
+  }
+
+  async function refresh() {
+    if ((previewMode && !liveEnabled) || fetching) return;
+    fetching = true;
+    try {
+      const at = previewMode ? playbackDate() : null;
+      const url = at === null ? metadataURL : metadataURL + '?at=' + encodeURIComponent(at);
+      const response = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
       if (!response.ok) {
         if (previewMode) unavailable(response.status === 401 || response.status === 403
           ? 'Reconnectez-vous pour écouter la PREVIEW.' : 'État PREVIEW indisponible.');
@@ -140,6 +163,8 @@
       }
       updateNext(previewMode && ready && data.track_id ? data : {});
       if (!data.track_id) {
+        metadata = null;
+        renderProgress();
         titleEl.textContent = data.message || 'En attente du flux…';
         artistEl.textContent = '';
         if (progressFill) progressFill.style.width = '0%';
@@ -153,18 +178,17 @@
         cover.src = source;
         cover.dataset.current = source;
       }
-      const duration = Number(data.duration) || 0;
-      const elapsed = Math.max(0, Number(data.elapsed) || 0);
-      const percent = duration > 0 ? Math.min(100, elapsed / duration * 100) : 0;
-      if (progressFill) progressFill.style.width = percent + '%';
+      metadata = data;
+      renderProgress();
     } catch (_) {
       if (previewMode) unavailable('État PREVIEW indisponible.');
       // Preserve the historical public player's metadata-failure behavior.
-    }
+    } finally { fetching = false; }
   }
 
   function unavailable(text) {
-    meterCall('reset');
+    metadata = null;
+    renderProgress();
     updateNext();
     previewMessage = text;
     ready = false;
@@ -195,5 +219,5 @@
   }
   updatePlayIcon();
   refresh();
-  setInterval(refresh, 5000);
+  setInterval(refresh, previewMode ? 1000 : 5000);
 })();

@@ -77,6 +77,39 @@ class PreviewRoutesTests(unittest.TestCase):
         self.controller.state = 'active'
         return started
 
+    def test_audible_position_resolves_previous_track_and_real_next(self):
+        self.session_user(1)
+        started = self.publish()
+        origin = started + .1
+        hls = self.root/'hls'
+        # Encoder is already on 26; the listener remains behind in track 1.
+        (hls/'now.json').write_text(json.dumps({'track_id':26, 'started_at':started+1,
+                                              'next_track_id':2}))
+        timing = {'started_at':started+.01, 'origin':origin, 'tracks':[
+            {'id':1, 'offset':0, 'next_track_id':26},
+            {'id':26, 'offset':1, 'next_track_id':2}]}
+        (hls/'timeline.json').write_text(json.dumps(timing))
+        data = self.get(f'/preview-radio/now-playing?at={origin+.5}').get_json()
+        self.assertEqual(data['track_id'], 1)
+        self.assertEqual(data['next_track_id'], 26)
+        self.assertTrue(data['timing_available'])
+        self.assertAlmostEqual(data['elapsed'], .5)
+        self.assertEqual(data['playback_started_at'], origin)
+        self.assertNotIn('tracks', data)
+        data = self.get(f'/preview-radio/now-playing?at={origin+1}').get_json()
+        self.assertEqual(data['track_id'], 26)
+        self.assertEqual(data['next_track_id'], 2)
+        self.assertEqual(data['elapsed'], 0)
+        self.assertEqual(self.get('/preview-radio/now-playing').get_json()['track_id'], 26)
+        for value in ('nan', 'inf', '-inf', 'invalid', str(origin-50)):
+            with self.subTest(value=value):
+                data = self.get('/preview-radio/now-playing?at='+value).get_json()
+                self.assertIsNone(data['track_id'])
+                self.assertFalse(data['timing_available'])
+        timing['started_at'] = started - 100
+        (hls/'timeline.json').write_text(json.dumps(timing))
+        self.assertFalse(self.get(f'/preview-radio/now-playing?at={origin+.5}').get_json()['timing_available'])
+
     def test_current_and_engine_selected_next_transition_and_absence(self):
         self.session_user(1)
         started = self.publish()

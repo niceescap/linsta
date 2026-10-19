@@ -20,31 +20,26 @@
     </header>
 
     <section class="player-card">
+      <div class="preview-heading"><div class="live"><span class="live-dot"></span>{{ 'PREVIEW / TEST' if preview_radio_enabled|default(false) else 'LIVE' }}</div></div>
       <img id="np-cover" class="cover" src="/static/digger-icon.png" alt="Cover">
       <div class="meta">
-        <div class="live"><span class="live-dot"></span>{{ 'PREVIEW / TEST' if preview_radio_enabled|default(false) else 'LIVE' }}</div>
         <h1 id="np-title" class="title">Chargement du flux…</h1>
         <div id="np-artist" class="artist">—</div>
-        <div class="badge">SELECTED BY DIGGER</div>
         <p id="player-status" class="muted" role="status" aria-live="polite">{% if preview_radio_enabled|default(false) and not user %}Connectez-vous avec un compte de test pour écouter la PREVIEW.{% else %}Appuyez sur lecture pour écouter.{% endif %}</p>
+      </div>
+      <div class="progress">
+        <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+      </div>
+      <div class="track-times"><span id="track-elapsed">--:--</span> / <span id="track-duration">--:--</span><div>Reste <span id="track-remaining">--:--</span></div></div>
+      <div class="controls">
+        <button id="playBtn" class="play-btn" type="button" aria-label="Écouter le direct" aria-pressed="false" {% if not radio_enabled|default(true) %}disabled{% endif %}>▶</button>
       </div>
       {% if preview_radio_enabled|default(false) %}
       <div id="next-track" class="next-track" hidden>
         <div class="next-label">À SUIVRE</div>
         <div class="next-details"><img id="next-cover" src="/static/digger-icon.png" alt="Pochette du prochain morceau"><div><strong id="next-title"></strong><div id="next-artist" class="muted"></div></div></div>
       </div>
-      <div id="audio-meter" class="audio-meter" aria-label="Niveau audio du lecteur">
-        <div class="vu-channel"><span id="vu-left-label">L</span><div class="vu-track"><div id="vu-left" class="vu-fill"></div></div></div>
-        <div id="vu-right-channel" class="vu-channel"><span>R</span><div class="vu-track"><div id="vu-right" class="vu-fill"></div></div></div>
-        <small id="vu-status" class="muted">Analyse après Play, selon compatibilité du navigateur</small>
-      </div>
       {% endif %}
-      <div class="progress">
-        <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
-      </div>
-      <div class="controls">
-        <button id="playBtn" class="play-btn" type="button" aria-label="Écouter le direct" aria-pressed="false" {% if not radio_enabled|default(true) %}disabled{% endif %}>▶</button>
-      </div>
       <div class="volume">
         <label for="volumeInput">Volume</label>
         <input id="volumeInput" type="range" min="0" max="100" value="80">
@@ -91,7 +86,6 @@
     </section>
   </main>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
-  <script src="{{ url_for('static', filename='js/audio-meter.js') }}"></script>
   <script src="{{ url_for('static', filename='js/radio.js') }}"></script>
 </body>
 </html>

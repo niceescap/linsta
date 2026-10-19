@@ -89,7 +89,7 @@ def clear_hls_dir():
             f.unlink()
 
 
-def start_encoder(*, threads=None):
+def start_encoder(*, threads=None, program_dates=False):
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin",
         "-f", "s16le", "-ar", str(RATE), "-ac", str(CHANNELS),
@@ -100,6 +100,8 @@ def start_encoder(*, threads=None):
         "-hls_list_size", "6", "-hls_flags", "delete_segments+omit_endlist+temp_file",
         "-hls_segment_filename", os.path.join(HLS_PATH, "seg_%09d.ts"), PLAYLIST,
     ]
+    if program_dates:
+        cmd[cmd.index('-hls_flags') + 1] += '+program_date_time'
     if threads is not None:
         cmd[cmd.index('-c:a'):cmd.index('-c:a')] = ['-threads', str(threads)]
         cmd[1:1] = ['-filter_threads', str(threads), '-filter_complex_threads', str(threads)]
@@ -127,6 +129,10 @@ def stop_process(proc):
 
 class Engine:
     def __init__(self, *, threads=None, continuous=False):
+        self.timeline_callback = None  # Opt-in private preview timing only.
+        self.pending_track = None
+        self.pcm_seconds = 0.0
+        self.timeline_origin = None
         self.threads = threads
         self.continuous = continuous
         self.pcm_queue = queue.Queue(maxsize=16)  # <= 3.2 seconds, never unbounded audio.
@@ -140,7 +146,13 @@ class Engine:
         self.started = self.last_progress
 
     def start(self):
-        self.encoder = start_encoder() if self.threads is None else start_encoder(threads=self.threads)
+        self.pcm_seconds = 0.0
+        self.timeline_origin = None
+        self.pending_track = None
+        if self.timeline_callback is not None:
+            self.encoder = start_encoder(threads=self.threads, program_dates=True)
+        else:
+            self.encoder = start_encoder() if self.threads is None else start_encoder(threads=self.threads)
         self.started = self.last_progress = time.monotonic()
         self.segment_stamp = None
         os.set_blocking(self.encoder.stdin.fileno(), False)
@@ -177,6 +189,13 @@ class Engine:
         try:
             # temp_file makes published segments immutable; inspect the playlist too.
             playlist = Path(PLAYLIST).read_text(encoding="utf-8")
+            if self.timeline_callback is not None and self.timeline_origin is None:
+                from datetime import datetime
+                dates = [line.split(':', 1)[1] for line in playlist.splitlines()
+                         if line.startswith('#EXT-X-PROGRAM-DATE-TIME:')]
+                if dates:
+                    self.timeline_origin = datetime.fromisoformat(dates[0].replace('Z', '+00:00')).timestamp()
+                    self.timeline_callback(None, None, self.timeline_origin)
             segments = [s.strip() for s in playlist.splitlines() if s.strip().endswith(".ts")]
             if segments:
                 last = Path(HLS_PATH, segments[-1])
@@ -196,7 +215,9 @@ class Engine:
             while pcm and not STOP and not self.pump_stop.is_set():
                 self.check()
                 try:
-                    self.pcm_queue.put(pcm, timeout=0.2)
+                    item = (pcm, self.pending_track) if self.pending_track is not None else pcm
+                    self.pcm_queue.put(item, timeout=0.2)
+                    self.pending_track = None
                     return
                 except queue.Full:
                     continue
@@ -249,7 +270,12 @@ class Engine:
                         print('[worker] private PCM unavailable; temporary silence (decoder/I/O wait)', flush=True)
                         warned = True
                 try:
+                    if isinstance(pcm, tuple):
+                        pcm, metadata = pcm
+                        if self.timeline_callback is not None:
+                            self.timeline_callback(self.pcm_seconds, metadata, self.timeline_origin)
                     self._send_pcm(pcm)
+                    self.pcm_seconds += len(pcm)/(RATE*BYTES_PER_FRAME)
                 finally:
                     if queued:
                         self.pcm_queue.task_done()

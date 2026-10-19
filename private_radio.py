@@ -30,6 +30,7 @@ import urllib.error
 
 from audio_storage import checked_open, identity
 from mutagen.mp3 import MP3
+from preview_schedule import ShuffleCycle
 
 ROOT = Path(__file__).resolve().parent / 'instance/demo/private-radio'
 PORT = 17001
@@ -256,26 +257,41 @@ def play_loop(root, worker, *, seconds, engine=None):
     timer.start()
     conn = connect(root)
     current = None
+    timeline = {'started_at': time.time(), 'origin': None, 'tracks': []}
+    def publish_timing(offset, metadata, origin):
+        if origin is not None:
+            timeline['origin'] = origin
+        if metadata is not None:
+            timeline['tracks'].append(dict(metadata, offset=offset))
+            timeline['tracks'] = timeline['tracks'][-128:]
+        temporary = root/'hls/timeline.json.tmp'
+        temporary.write_text(json.dumps(timeline))
+        os.replace(temporary, root/'hls/timeline.json')
+    if hasattr(engine, 'timeline_callback'):
+        engine.timeline_callback = publish_timing
     try:
         worker.clear_hls_dir()
+        publish_timing(None, None, None)
         engine.start()
+        schedule = ShuffleCycle(playlist)
         while not worker.STOP:
-            for index, track in enumerate(playlist):
-                if worker.STOP:
-                    break
-                validate_file(root,track['filename'],digest=track['sha256'],size=track['size'])
-                current = conn.execute('INSERT INTO private_plays(track_id) VALUES (?)',(track['id'],)).lastrowid
-                conn.commit()
-                # This is the actual ordered playback list held under the lock,
-                # including the wrap-around (or the same track for a single item).
-                next_track = playlist[(index + 1) % len(playlist)]
-                worker.write_state(dict(id=track['id'],title=track['title'],artist=track['artist'],genre_slug='private-test'),
-                                   time.time(),track['duration'],next_track=next_track)
-                if not engine.play(str(root/track['filename'])) and not worker.STOP:
-                    raise ValueError('Private track decode failed; stopped instead of silently approving other media')
-                conn.execute('UPDATE private_plays SET ended_at=CURRENT_TIMESTAMP WHERE id=?',(current,))
-                conn.commit()
-                current = None
+            track, next_track = schedule.current, schedule.next_track
+            validate_file(root,track['filename'],digest=track['sha256'],size=track['size'])
+            current = conn.execute('INSERT INTO private_plays(track_id) VALUES (?)',(track['id'],)).lastrowid
+            conn.commit()
+            metadata = dict(id=track['id'],title=track['title'],artist=track['artist'],
+                            duration=track['duration'], next_track_id=next_track['id'])
+            if hasattr(engine, 'timeline_callback'):
+                engine.pending_track = metadata
+            worker.write_state(dict(id=track['id'],title=track['title'],artist=track['artist'],genre_slug='private-test'),
+                               time.time(),track['duration'],next_track=next_track)
+            if not engine.play(str(root/track['filename'])) and not worker.STOP:
+                raise ValueError('Private track decode failed; stopped instead of silently approving other media')
+            conn.execute('UPDATE private_plays SET ended_at=CURRENT_TIMESTAMP WHERE id=?',(current,))
+            conn.commit()
+            current = None
+            # Future jingle belongs here, without changing schedule.next_track.
+            schedule.advance()
     finally:
         timer.cancel()
         engine.stop()

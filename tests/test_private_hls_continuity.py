@@ -21,6 +21,41 @@ class PrivateHLSContinuityTests(unittest.TestCase):
         p.write_bytes(b'segment')
         (self.root/'hls/stream.m3u8').write_text('#EXTM3U\n'+p.name+'\n')
 
+    def test_track_marker_is_published_when_pump_consumes_pcm_not_when_queued(self):
+        w = self.worker
+        engine = w.Engine(continuous=True)
+        metadata = {'id': 7, 'next_track_id': 3}
+        calls = []
+        engine.timeline_callback = lambda *args: calls.append(args)
+        engine.pending_track = metadata
+        chunk = bytes(w.PCM_CHUNK)
+        with patch.object(engine, 'check'):
+            engine.send(chunk)
+        self.assertFalse(calls)
+        engine.pcm_seconds = 5.0  # Includes real PCM/silence previously encoded.
+        engine.timeline_origin = 1000.0
+        def consume(pcm):
+            self.assertEqual(pcm, chunk)
+            engine.pump_stop.set()
+        with patch.object(engine, '_send_pcm', side_effect=consume):
+            engine._pump_pcm()
+        self.assertEqual(calls, [(5.0, metadata, 1000.0)])
+        self.assertAlmostEqual(engine.pcm_seconds, 5 + len(chunk)/(w.RATE*w.BYTES_PER_FRAME))
+        self.assertEqual(engine.pcm_queue.unfinished_tasks, 0)
+
+    def test_new_engine_start_resets_previous_run_timing(self):
+        w = self.worker
+        engine = w.Engine()
+        engine.pcm_seconds, engine.timeline_origin = 999, 1000
+        engine.pending_track = {'id': 1}
+        encoder = Mock()
+        encoder.stdin.fileno.return_value = 12
+        with patch.object(w, 'start_encoder', return_value=encoder), patch.object(w.os, 'set_blocking'):
+            engine.start()
+        self.assertEqual(engine.pcm_seconds, 0)
+        self.assertIsNone(engine.timeline_origin)
+        self.assertIsNone(engine.pending_track)
+
     def test_input_wait_over_20_seconds_keeps_encoder_fed_and_watchdog_unchanged(self):
         w=self.worker
         engine=w.Engine(continuous=True)
