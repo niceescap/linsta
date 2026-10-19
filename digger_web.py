@@ -17,8 +17,10 @@ require_initialized(data_root=data_root)
 
 from app import app as application
 from audio_storage import MediaLimits
-from flask import jsonify, render_template, request
+from flask import g, jsonify, render_template, request, url_for
 from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+from app import admin_required, login_required
+from preview_radio_web import create_preview_blueprint, ServiceController, DEFAULT_ROOT
 
 # Keep the existing session secret, cookie name, users and files. Limits match
 # the existing Nginx 16 MiB request ceiling; no infrastructure change is needed.
@@ -28,6 +30,9 @@ application.config['MEDIA_LIMITS'] = MediaLimits(audio_bytes=10 * 1024 * 1024,
     cover_bytes=4 * 1024 * 1024, duration_seconds=600, cover_pixels=4_000_000,
     cover_dimension=4096)
 application.config['GOOGLE_OAUTH_ENABLED'] = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+application.config.update(PREVIEW_RADIO_ROOT=DEFAULT_ROOT,
+                          PREVIEW_RADIO_CONTROLLER=ServiceController())
+application.register_blueprint(create_preview_blueprint(login_required, admin_required))
 
 
 @application.before_request
@@ -42,7 +47,10 @@ def public_media_closed():
 
 @application.context_processor
 def radio_mode():
-    return {'radio_enabled': False, 'local_login_enabled': True,
+    return {'radio_enabled': g.current_user is not None, 'local_login_enabled': True,
+            'preview_radio_enabled': True,
+            'radio_stream_url': url_for('preview_radio.hls', name='stream.m3u8'),
+            'radio_metadata_url': url_for('preview_radio.now_playing'),
             'google_oauth_enabled': application.config['GOOGLE_OAUTH_ENABLED']}
 
 

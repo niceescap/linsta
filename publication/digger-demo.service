@@ -6,7 +6,7 @@ StartLimitBurst=3
 
 [Service]
 Type=exec
-WorkingDirectory=/home/jean/digger/instance/releases/digger-web
+WorkingDirectory=/home/jean/digger/instance/releases/digger-preview
 Environment=DIGGER_DEMO_SETTINGS=/home/jean/.config/digger-demo/settings.json
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=DIGGER_DATA_ROOT=/home/jean/digger/instance/demo

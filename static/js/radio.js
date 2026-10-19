@@ -10,10 +10,15 @@
   const status = document.getElementById('player-status');
   const SRC = audio.dataset.streamUrl || '/hls/stream.m3u8';
   const liveEnabled = audio.dataset.liveEnabled !== 'false';
+  const previewMode = audio.dataset.preview === 'true';
+  const metadataURL = audio.dataset.metadataUrl || '/now-playing';
   const FALLBACK = '/static/digger-icon.png';
   let hls = null;
   let retryTimer = null;
   let wantsPlayback = false;
+  let ready = !previewMode;
+  let attached = false;
+  let previewMessage = 'Radio PREVIEW en attente de son état…';
 
   function message(text) {
     if (status) status.textContent = text;
@@ -24,13 +29,13 @@
     const playing = !audio.paused;
     playBtn.textContent = playing ? '⏸' : '▶';
     playBtn.setAttribute('aria-pressed', String(playing));
-    playBtn.setAttribute('aria-label', playing ? 'Mettre en pause' : 'Écouter le direct');
+    playBtn.setAttribute('aria-label', playing ? 'Mettre en pause' : previewMode ? 'Écouter la PREVIEW' : 'Écouter le direct');
   }
 
   async function play() {
     try {
       await audio.play();
-      message('Lecture du direct.');
+      message(previewMode ? 'Lecture PREVIEW / TEST.' : 'Lecture du direct.');
     } catch (_) {
       wantsPlayback = false;
       message('Lecture indisponible. Appuyez sur lecture pour réessayer.');
@@ -39,18 +44,22 @@
   }
 
   function retry() {
-    if (!liveEnabled) return;
+    if (!liveEnabled || !ready || (previewMode && !wantsPlayback)) return;
     message('Flux indisponible — nouvelle tentative…');
     if (retryTimer !== null) return;
     retryTimer = setTimeout(() => {
       retryTimer = null;
+      if (!ready || (previewMode && !wantsPlayback)) return;
       if (hls) { hls.destroy(); hls = null; }
+      attached = false;
       attach();
       if (wantsPlayback) play();
     }, 3000);
   }
 
   function attach() {
+    if (attached) return;
+    attached = true;
     if (audio.canPlayType('application/vnd.apple.mpegurl')) {
       audio.src = SRC;
     } else if (window.Hls && Hls.isSupported()) {
@@ -65,8 +74,10 @@
 
   playBtn?.addEventListener('click', () => {
     if (!liveEnabled) return;
+    if (previewMode && !ready) { message(previewMessage); return; }
     if (audio.paused) {
       wantsPlayback = true;
+      if (previewMode) attach(); // Same user gesture as play(): Safari native HLS.
       play();
     } else {
       wantsPlayback = false;
@@ -83,10 +94,21 @@
   });
 
   async function refresh() {
+    if (previewMode && !liveEnabled) return;
     try {
-      const response = await fetch('/now-playing', { cache: 'no-store' });
-      if (!response.ok) return;
+      const response = await fetch(metadataURL, { cache: 'no-store', credentials: 'same-origin' });
+      if (!response.ok) {
+        if (previewMode) unavailable(response.status === 401 || response.status === 403
+          ? 'Reconnectez-vous pour écouter la PREVIEW.' : 'État PREVIEW indisponible.');
+        return;
+      }
       const data = await response.json();
+      if (previewMode) {
+        ready = data.available === true;
+        previewMessage = data.message || 'Radio PREVIEW arrêtée.';
+        if (!ready) unavailable(previewMessage);
+        else if (!wantsPlayback) message('PREVIEW prête. Appuyez sur Play.');
+      }
       if (!data.track_id) {
         titleEl.textContent = data.message || 'En attente du flux…';
         artistEl.textContent = '';
@@ -96,7 +118,7 @@
       }
       titleEl.textContent = data.title || '—';
       artistEl.textContent = data.artist ? `— ${data.artist}` : '';
-      const source = '/media/cover/' + data.track_id;
+      const source = previewMode ? data.cover_url : '/media/cover/' + data.track_id;
       if (cover && cover.dataset.current !== source) {
         cover.src = source;
         cover.dataset.current = source;
@@ -105,14 +127,39 @@
       const elapsed = Math.max(0, Number(data.elapsed) || 0);
       const percent = duration > 0 ? Math.min(100, elapsed / duration * 100) : 0;
       if (progressFill) progressFill.style.width = percent + '%';
-    } catch (_) { /* A failed metadata request must not interrupt audio. */ }
+    } catch (_) {
+      if (previewMode) unavailable('État PREVIEW indisponible.');
+      // Preserve the historical public player's metadata-failure behavior.
+    }
   }
 
-  if (liveEnabled) {
+  function unavailable(text) {
+    previewMessage = text;
+    ready = false;
+    wantsPlayback = false;
+    if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
+    if (attached) {
+      audio.pause();
+      if (hls) { hls.destroy(); hls = null; }
+      audio.removeAttribute('src');
+      audio.load();
+      attached = false;
+    }
+    titleEl.textContent = text;
+    artistEl.textContent = '';
+    if (cover) { cover.src = FALLBACK; delete cover.dataset.current; }
+    if (progressFill) progressFill.style.width = '0%';
+    message(text);
+    updatePlayIcon();
+  }
+
+  if (liveEnabled && !previewMode) {
     attach();
-  } else {
+  } else if (!liveEnabled) {
     if (playBtn) playBtn.disabled = true;
-    message('Le direct n’est pas encore ouvert.');
+    message(previewMode ? 'Connectez-vous avec un compte de test pour écouter la PREVIEW.' : 'Le direct n’est pas encore ouvert.');
+  } else {
+    message(previewMessage);
   }
   updatePlayIcon();
   refresh();
