@@ -2,9 +2,9 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <title>Admin — Linsta Radio</title>
+  <title>Admin — Digger Radio</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" href="{{ url_for('static', filename='radio-logo.png') }}">
+  <link rel="icon" href="{{ url_for('static', filename='digger-icon.png') }}">
   <style>
     body { font-family: system-ui, sans-serif; max-width: 60rem; margin: 2rem auto; padding: 0 1rem; color: #222; }
     h1 { display: flex; align-items: center; gap: 0.75rem; }
@@ -33,13 +33,14 @@
 </head>
 <body>
   <h1>
-    <img src="{{ url_for('static', filename='radio-logo.png') }}" alt="">
-    Admin — Linsta Radio
+    <img src="{{ url_for('static', filename='digger-logo-horizontal.png') }}" alt="">
+    Admin — Digger Radio
   </h1>
   <p class="muted">
     Connecté : <strong>{{ user.display_name }}</strong> — <a href="/">retour à l'accueil</a>
   </p>
 
+  <p><a href="{{ url_for('submission_review.queue') }}">Propositions URL — file de validation</a></p>
   {% if message %}<p class="ok">{{ message }}</p>{% endif %}
   {% if error %}<p class="err">{{ error }}</p>{% endif %}
 
@@ -59,7 +60,7 @@
       <div class="row">
         <img src="/media/cover/{{ t.id }}" alt=""
              style="width:72px;height:72px;object-fit:cover;border-radius:6px;background:#eee;flex-shrink:0"
-             onerror="this.src='/static/radio-logo.png'">
+             onerror="this.onerror=null;this.src='/static/digger-icon.png'">
         <div class="meta">
           <h3>{{ t.title }}</h3>
           <p class="muted">
@@ -78,34 +79,44 @@
       <audio controls preload="none" src="/media/{{ t.id }}"></audio>
 
       <div class="row">
+        {% if t.submission_id %}
+          <p>Proposition liée : <a href="{{ url_for('submission_review.show', submission_id=t.submission_id) }}">consulter le parcours de validation</a>. Les actions historiques sont indisponibles.</p>
+        {% else %}
         {% if t.status == 'pending' %}
           <form method="post" action="/admin/tracks/{{ t.id }}/approve">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn-ok">Valider</button>
           </form>
           <form method="post" action="/admin/tracks/{{ t.id }}/reject">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="text" name="reason" placeholder="motif (optionnel)" class="reason-input">
             <button type="submit" class="btn-no">Rejeter</button>
           </form>
         {% elif t.status == 'approved' %}
           <form method="post" action="/admin/tracks/{{ t.id }}/reject"
                 onsubmit="return confirm('Rejeter ce morceau ? Il ne sera plus diffusé.')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="text" name="reason" placeholder="motif (optionnel)" class="reason-input">
             <button type="submit" class="btn-no">Rejeter</button>
           </form>
         {% elif t.status == 'rejected' %}
           <form method="post" action="/admin/tracks/{{ t.id }}/reintegrate">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn-ok">Réintégrer</button>
           </form>
           <form method="post" action="/admin/tracks/{{ t.id }}/delete"
                 onsubmit="return confirm('Supprimer DÉFINITIVEMENT ce morceau ?\nFichier audio et image seront effacés du disque. Cette action est irréversible.')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn-no">Supprimer définitivement</button>
           </form>
         {% endif %}
 
         {% if t.source_url and t.status != 'rejected' %}
           <form method="post" action="/admin/tracks/{{ t.id }}/refetch-cover">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" style="background:#444">🔄 Image</button>
           </form>
+        {% endif %}
         {% endif %}
       </div>
     </div>

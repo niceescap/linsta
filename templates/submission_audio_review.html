@@ -1,0 +1,29 @@
+{% extends 'admin_submissions.html' %}
+{% block title %}Revue finale MP3 et cover{% endblock %}
+{% block content %}
+<h1>Revue finale MP3 et cover</h1>
+{% if proposal %}
+<p><a href="{{ url_for('submission_review.show',submission_id=proposal.id) }}">Retour à la proposition</a></p>
+<p>{{ proposal.title }} — {{ proposal.artist }} · {{ status_labels[proposal.status] }}</p>
+{% if proof %}
+<audio controls preload="none" src="{{ url_for('submission_audio.admin_media',submission_id=proposal.id,kind='audio') }}"></audio>
+<p><img style="max-width:100%;max-height:400px" alt="Cover déposée pour validation" src="{{ url_for('submission_audio.admin_media',submission_id=proposal.id,kind='cover') }}"></p>
+<p>Déclarant : {{ proof.declared_name }} · artiste : {{ proof.declared_artist }} · qualité : {{ proof.declarant_capacity }} · {{ proof.accepted_at }}</p>
+<p>Acceptations musicale et visuelle : enregistrées.</p>
+<details><summary>Document unique enregistré — {{ proof.document_version }}</summary><pre style="white-space:pre-wrap">{{ proof.document_text }}</pre></details>
+<details><summary>Empreintes des fichiers autorisés</summary><p>MP3 : {{ proof.audio_sha256 }}</p><p>Cover originale : {{ proof.cover_original_sha256 }}</p><p>Cover affichée : {{ proof.cover_normalized_sha256 or proof.cover_original_sha256 }}</p><p>Document : {{ proof.document_sha256 }}</p></details>
+{% else %}<p>Ancien dépôt sans preuve complète : approbation interdite. Un refus motivé reste possible.</p>{% endif %}
+{% if proposal.status == 'pending_audio_review' %}
+{% if not production_ready %}<p role="status">Approbation bloquée : le document n’est pas validé juridiquement. Les fichiers peuvent être examinés et le dépôt peut être refusé.</p>{% endif %}
+<form method="post" action="{{ url_for('submission_audio.approve',submission_id=proposal.id) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label><input type="checkbox" name="listened" required> J’ai écouté le MP3 et je l’approuve.</label>
+<label><input type="checkbox" name="cover_checked" required> J’ai examiné la cover et les autorisations correspondantes.</label>
+<button type="submit" {% if not production_ready %}disabled{% endif %}>Approuver définitivement le dépôt</button></form>
+<form method="post" action="{{ url_for('submission_audio.reject',submission_id=proposal.id) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>Motif obligatoire <input name="reason" required></label><button type="submit">Refuser le dépôt</button></form>
+{% else %}<p>Décision finale enregistrée. Aucun nouveau dépôt ni nouvelle décision n’est permis.</p>{% endif %}
+{% if proposal.rejection_reason %}<p>Motif : {{ proposal.rejection_reason }}</p>{% endif %}
+{% endif %}
+{% endblock %}

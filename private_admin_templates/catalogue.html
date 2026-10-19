@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Catalogue radio privé</title>
+<style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:1rem}article{border:1px solid #bbb;padding:1rem;margin:1rem 0}label{display:inline-block;margin:.3rem}input{max-width:100%}form{margin:.6rem 0}button{padding:.4rem}small{color:#555}</style>
+<h1>Catalogue radio strictement privé</h1>
+<p>{{ tracks|length }} morceaux enregistrés. Aucun droit de diffusion publique accordé ici.</p>
+<p>Les modifications sont bloquées tant que le moteur radio tourne. Arrêtez l’essai, modifiez, puis relancez-le. Aucune modification des fichiers MP3.</p>
+{% for track in tracks %}
+<article>
+<h2>{{ track.title }}</h2>
+<p>{{ track.artist }} · {{ '%d:%02d'|format((track.duration // 60)|int, (track.duration % 60)|int) }} ·
+<strong>{% if track.removed_at %}Retiré du catalogue{% elif track.enabled %}Actif — essai privé uniquement{% else %}Désactivé{% endif %}</strong></p>
+<small>{{ track.filename }}</small>
+{% if not track.removed_at %}
+<form method="post" action="/tracks/{{ track.id }}">
+<input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ track.revision }}">
+<input type="hidden" name="action" value="metadata">
+<label>Titre <input name="title" value="{{ track.title }}" maxlength="256" required></label>
+<label>Artiste <input name="artist" value="{{ track.artist }}" maxlength="256" required></label>
+<button>Enregistrer les métadonnées d’affichage</button></form>
+<form method="post" action="/tracks/{{ track.id }}">
+<input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ track.revision }}">
+<button name="action" value="toggle">{% if track.enabled %}Désactiver{% else %}Activer pour l’essai privé{% endif %}</button></form>
+<details><summary>Retirer du catalogue</summary>
+<form method="post" action="/tracks/{{ track.id }}">
+<input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="revision" value="{{ track.revision }}">
+<input type="hidden" name="action" value="remove">
+<label><input type="checkbox" name="confirm" value="{{ track.id }}" required> Je confirme le retrait de « {{ track.title }} ». Le MP3 et l’historique seront conservés.</label>
+<button>Confirmer le retrait</button></form></details>
+{% endif %}
+</article>{% endfor %}
+<h2>Fichiers présents mais non importés ({{ extras|length }})</h2>
+<p>Inventaire informatif uniquement. Aucun import ni accès audio depuis cette interface.</p>
+<ul>{% for item in extras %}<li>{{ item.name }} — {{ item.size }} octets{% if not item.regular %} — fichier non admissible (lien ou type interdit){% endif %}</li>{% else %}<li>Aucun.</li>{% endfor %}</ul>
+</html>

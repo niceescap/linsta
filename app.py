@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+from contextlib import contextmanager
 from datetime import timedelta
 from functools import wraps
 
 from authlib.integrations.flask_client import OAuth
+from authlib.integrations.base_client.errors import OAuthError
 from flask import (Flask, request, jsonify, session, redirect, url_for,
-                   render_template, send_file)
+                   render_template, send_file, g)
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from config import (
@@ -13,6 +15,10 @@ from config import (
     SESSION_LIFETIME_DAYS,
 )
 from db import get_db
+from web_security import init_web_security, clear_login_session
+from audio_storage import MediaLimits, StorageError, checked_open
+from submission_audio_routes import audio_preflight, create_audio_blueprint
+import os
 from email_utils import (
     generate_verification_token,
     confirm_verification_token,
@@ -30,6 +36,15 @@ app.config.update(
     SESSION_COOKIE_SECURE=not FLASK_DEBUG,
     PERMANENT_SESSION_LIFETIME=timedelta(days=SESSION_LIFETIME_DAYS),
 )
+media_limits = MediaLimits.from_environment(os.environ)
+app.config.update(MEDIA_LIMITS=media_limits, MAX_CONTENT_LENGTH=media_limits.request_bytes,
+                  MAX_FORM_MEMORY_SIZE=500000, MAX_FORM_PARTS=20)
+init_web_security(app, lambda: get_db(), pre_body_check=lambda: audio_preflight(lambda: get_db()))
+
+
+@app.errorhandler(413)
+def oversized_request(error):
+    return jsonify(error='La requête dépasse la taille autorisée.', code='file_too_large'), 413
 
 # Derrière nginx : faire confiance aux en-têtes X-Forwarded-* pour que
 # url_for(_external=True) génère les bonnes URLs (https://fgl.servemp3.com).
@@ -63,7 +78,9 @@ ADMIN_EMAILS = {
 def login_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if "user_id" not in session:
+        if g.current_user is None:
+            if g.account_unverified:
+                return jsonify({"error": "compte non validé"}), 403
             return jsonify({"error": "non connecté"}), 401
         return f(*args, **kwargs)
     return wrapper
@@ -72,12 +89,22 @@ def login_required(f):
 def admin_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if "user_id" not in session:
+        if g.current_user is None:
+            if g.account_unverified:
+                return jsonify({"error": "compte non validé"}), 403
             return jsonify({"error": "non connecté"}), 401
-        if session.get("role") != "admin":
+        if g.current_user['role'] != "admin":
             return jsonify({"error": "admin requis"}), 403
         return f(*args, **kwargs)
     return wrapper
+
+
+from submission_routes import create_submission_blueprint
+app.register_blueprint(create_submission_blueprint(lambda: get_db(), login_required))
+from submission_review_routes import create_submission_review_blueprint
+app.register_blueprint(create_submission_review_blueprint(lambda: get_db(), admin_required))
+app.register_blueprint(create_audio_blueprint(lambda: get_db(), lambda: (STORAGE_PATH, META_PATH),
+                                            login_required, admin_required))
 
 
 # ─────────────────────────────────────────────
@@ -86,13 +113,7 @@ def admin_required(f):
 
 @app.route("/", methods=["GET"])
 def index():
-    user = None
-    if "user_id" in session:
-        user = {
-            "id": session["user_id"],
-            "display_name": session.get("display_name"),
-            "role": session.get("role"),
-        }
+    user = g.current_user
     db = get_db()
     genres = db.execute("SELECT id, label FROM genres ORDER BY sort").fetchall()
     db.close()
@@ -107,7 +128,7 @@ def index():
 
 @app.route("/logout-form", methods=["POST"])
 def logout_form():
-    session.clear()
+    clear_login_session()
     return redirect("/")
 
 
@@ -199,6 +220,7 @@ def login():
     if not user["is_verified"]:
         return jsonify({"error": "compte non validé, vérifie ta boîte mail"}), 403
 
+    clear_login_session()
     session.permanent = True
     session["user_id"] = user["id"]
     session["display_name"] = user["display_name"]
@@ -216,7 +238,7 @@ def login():
 
 @app.route("/logout", methods=["POST"])
 def logout():
-    session.clear()
+    clear_login_session()
     return jsonify({"ok": True})
 
 
@@ -242,14 +264,18 @@ def login_google():
 
 @app.route("/auth/callback")
 def auth_google_callback():
-    token = google.authorize_access_token()
+    try:
+        # Authlib must consume and validate OAuth state before any account write.
+        token = google.authorize_access_token()
+    except OAuthError:
+        return jsonify({"error": "réponse OAuth invalide"}), 400
     userinfo = token.get("userinfo") or google.userinfo()
 
     email = (userinfo.get("email") or "").strip().lower()
     google_id = userinfo.get("sub")
     display_name = (userinfo.get("name") or email).strip()
 
-    if not email or not google_id:
+    if not email or not google_id or userinfo.get('email_verified') is not True:
         return jsonify({"error": "réponse Google incomplète"}), 400
 
     db = get_db()
@@ -286,6 +312,7 @@ def auth_google_callback():
 
     db.close()
 
+    clear_login_session()
     session.permanent = True
     session["user_id"] = user_id
     session["display_name"] = display_name
@@ -295,85 +322,25 @@ def auth_google_callback():
 
 
 # ─────────────────────────────────────────────
-# UPLOAD DE TRACKS
+# ANCIEN DÉPÔT DIRECT — FERMÉ (parcours URL-first obligatoire)
 # ─────────────────────────────────────────────
 
 import os
 import time
-import uuid
-from mutagen import File as MutagenFile
-from config import TRACKS_PATH, STORAGE_PATH
+# META_PATH is also needed to serve and delete existing legacy cover files.
+from config import STORAGE_PATH, META_PATH
 
 
 @app.route("/tracks", methods=["POST"])
 @login_required
 def upload_track():
-    file = request.files.get("file")
-    if not file or not file.filename:
-        return redirect("/?err=Fichier+manquant")
-
-    if not file.filename.lower().endswith(".mp3"):
-        return redirect("/?err=Seuls+les+MP3+sont+accept%C3%A9s")
-
-    title = (request.form.get("title") or "").strip()
-    artist = (request.form.get("artist") or "").strip()
-    source_url = (request.form.get("source_url") or "").strip()
-    try:
-        genre_id = int(request.form.get("genre_id") or 0)
-    except ValueError:
-        genre_id = 0
-
-    if not title or not genre_id:
-        return redirect("/?err=Titre+et+genre+obligatoires")
-
-    db = get_db()
-    genre = db.execute("SELECT id FROM genres WHERE id = ?", (genre_id,)).fetchone()
-    if not genre:
-        db.close()
-        return redirect("/?err=Genre+invalide")
-
-    ext = os.path.splitext(file.filename)[1].lower()
-    stored_name = f"{uuid.uuid4().hex}{ext}"
-    abs_path = os.path.join(TRACKS_PATH, stored_name)
-    file.save(abs_path)
-
-    file_size = os.path.getsize(abs_path)
-    rel_path = os.path.join("tracks", stored_name)
-
-    duration = None
-    try:
-        audio = MutagenFile(abs_path)
-        if audio is not None and audio.info is not None:
-            duration = float(audio.info.length)
-    except Exception:
-        pass
-
-    cur = db.execute(
-        """INSERT INTO tracks
-           (uploader_id, file_path, file_size, original_filename,
-            title, artist, genre_id, duration_seconds, source_url, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
-        (session["user_id"], rel_path, file_size, file.filename,
-         title, artist, genre_id, duration, source_url or None),
-    )
-    track_id = cur.lastrowid
-    db.commit()
-    db.close()
-
-    # Récupération de l'image OG (timeout court, échec silencieux)
-    if source_url:
-        try:
-            img_name = download_og_image(source_url, track_id, META_PATH)
-            if img_name:
-                db = get_db()
-                db.execute("UPDATE tracks SET meta_path = ? WHERE id = ?",
-                           (img_name, track_id))
-                db.commit()
-                db.close()
-        except Exception:
-            pass
-
-    return redirect("/?ok=Track+envoy%C3%A9%2C+en+attente+de+validation")
+    # Keep authentication and global CSRF; never inspect/save audio or open a
+    # write transaction here, even when an accepted submission ID is supplied.
+    return jsonify({
+        "code": "direct_upload_disabled",
+        "error": "Le dépôt direct MP3 est fermé. Proposez un lien YouTube ou Spotify dans /submissions.",
+        "submissions_url": url_for("contributions.dashboard"),
+    }), 410
 
 
 # ─────────────────────────────────────────────
@@ -386,11 +353,12 @@ def admin_index():
     status_filter = request.args.get("status")
     db = get_db()
     query = """
-        SELECT t.*, g.label AS genre_label,
+        SELECT t.*, s.id AS submission_id, g.label AS genre_label,
                u.display_name AS uploader_name, u.email AS uploader_email
         FROM tracks t
         LEFT JOIN genres g ON g.id = t.genre_id
         LEFT JOIN users  u ON u.id = t.uploader_id
+        LEFT JOIN submissions s ON s.track_id = t.id
     """
     params = ()
     if status_filter in ("pending", "approved", "rejected"):
@@ -413,23 +381,53 @@ def admin_index():
     )
 
 
+class LinkedSubmissionTrackError(Exception):
+    def __init__(self, submission_id):
+        self.submission_id = submission_id
+
+
+@app.errorhandler(LinkedSubmissionTrackError)
+def linked_submission_track_error(error):
+    return jsonify({
+        "code": "linked_submission_track",
+        "error": "Ce morceau dépend d’une proposition : utilisez son parcours de validation audio.",
+        "submission_url": url_for("submission_review.show", submission_id=error.submission_id),
+    }), 409
+
+
+@contextmanager
+def _legacy_track_transaction(track_id):
+    """Serialize link-check and mutation; legacy actions never touch linked audio.
+
+    A concurrent attachment cannot slip between the check and a track update or
+    deletion. No provider request or media deletion occurs inside this transaction.
+    """
+    conn = get_db()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            linked = conn.execute("SELECT id FROM submissions WHERE track_id=?", (track_id,)).fetchone()
+            if linked:
+                raise LinkedSubmissionTrackError(linked['id'])
+            yield conn
+    finally:
+        conn.close()
+
+
 @app.route("/admin/tracks/<int:track_id>/approve", methods=["POST"])
 @admin_required
 def approve_track(track_id):
-    db = get_db()
-    track = db.execute("SELECT id FROM tracks WHERE id = ?", (track_id,)).fetchone()
-    if not track:
-        db.close()
-        return redirect("/admin?err=Track+introuvable")
-    db.execute(
-        """UPDATE tracks
-           SET status='approved', reviewed_by=?, reviewed_at=CURRENT_TIMESTAMP,
-               rejection_reason=NULL, updated_at=CURRENT_TIMESTAMP
-           WHERE id=?""",
-        (session["user_id"], track_id),
-    )
-    db.commit()
-    db.close()
+    with _legacy_track_transaction(track_id) as db:
+        track = db.execute("SELECT id FROM tracks WHERE id = ?", (track_id,)).fetchone()
+        if not track:
+            return redirect("/admin?err=Track+introuvable")
+        db.execute(
+            """UPDATE tracks
+               SET status='approved', reviewed_by=?, reviewed_at=CURRENT_TIMESTAMP,
+                   rejection_reason=NULL, updated_at=CURRENT_TIMESTAMP
+               WHERE id=?""",
+            (session["user_id"], track_id),
+        )
     return redirect("/admin?ok=Track+valid%C3%A9")
 
 
@@ -437,20 +435,17 @@ def approve_track(track_id):
 @admin_required
 def reject_track(track_id):
     reason = (request.form.get("reason") or "").strip()
-    db = get_db()
-    track = db.execute("SELECT id FROM tracks WHERE id = ?", (track_id,)).fetchone()
-    if not track:
-        db.close()
-        return redirect("/admin?err=Track+introuvable")
-    db.execute(
-        """UPDATE tracks
-           SET status='rejected', reviewed_by=?, reviewed_at=CURRENT_TIMESTAMP,
-               rejection_reason=?, updated_at=CURRENT_TIMESTAMP
-           WHERE id=?""",
-        (session["user_id"], reason or None, track_id),
-    )
-    db.commit()
-    db.close()
+    with _legacy_track_transaction(track_id) as db:
+        track = db.execute("SELECT id FROM tracks WHERE id = ?", (track_id,)).fetchone()
+        if not track:
+            return redirect("/admin?err=Track+introuvable")
+        db.execute(
+            """UPDATE tracks
+               SET status='rejected', reviewed_by=?, reviewed_at=CURRENT_TIMESTAMP,
+                   rejection_reason=?, updated_at=CURRENT_TIMESTAMP
+               WHERE id=?""",
+            (session["user_id"], reason or None, track_id),
+        )
     return redirect("/admin?ok=Track+rejet%C3%A9")
 
 
@@ -500,8 +495,42 @@ def now_playing():
 def serve_cover(track_id):
     """Sert l'image de chaîne (OG) ou redirige vers le logo radio en fallback."""
     db = get_db()
-    track = db.execute("SELECT meta_path FROM tracks WHERE id = ?", (track_id,)).fetchone()
+    track = db.execute("""SELECT t.meta_path,t.status,s.id AS submission_id,s.status AS submission_status,b.id AS bundle_id,
+        b.cover_original_path,b.cover_original_sha256,b.cover_original_size,b.cover_original_mime,
+        b.cover_normalized_path,b.cover_normalized_sha256,b.cover_normalized_size,b.cover_normalized_mime,
+        CASE WHEN a.id IS NOT NULL THEN digger_document_ready(a.document_version,a.document_text,a.document_sha256)
+            ELSE 0 END AS rights_ready
+        FROM tracks t LEFT JOIN submissions s ON s.track_id=t.id
+        LEFT JOIN submission_media_bundles b ON b.submission_id=s.id
+        LEFT JOIN submission_authorizations a ON a.bundle_id=b.id WHERE t.id=?""", (track_id,)).fetchone()
     db.close()
+    # A previously approved linked track without a media bundle predates the new
+    # evidence workflow. Preserve its existing cover; migration 003 prevents any
+    # new source approval without a bundle. Pending/rejected covers stay private.
+    legacy_approved = bool(track and track['bundle_id'] is None and track['status']=='approved'
+                           and track['submission_status']=='approved')
+    if track and track['submission_id'] is not None and not legacy_approved:
+        if track['status']!='approved' or track['submission_status']!='approved' or not track['rights_ready']:
+            response=jsonify(error='Cover indisponible avant validation finale.')
+            response.headers['Cache-Control']='no-store'
+            return response,404
+        prefix='cover_normalized' if track['cover_normalized_path'] else 'cover_original'
+        if not track[prefix+'_path'] or track['meta_path']!=track[prefix+'_path']:
+            return jsonify(error='Cover autorisée indisponible.'),404
+        try:
+            stream,_=checked_open(META_PATH,track[prefix+'_path'],sha256=track[prefix+'_sha256'],size=track[prefix+'_size'])
+        except StorageError:
+            return jsonify(error='Cover autorisée indisponible.'),404
+        try:
+            response=send_file(stream,mimetype=track[prefix+'_mime'],download_name='cover',
+                               conditional=False,etag=False,max_age=0)
+            response.headers['Cache-Control']='no-store'
+            response.headers['X-Content-Type-Options']='nosniff'
+            response.call_on_close(stream.close)
+            return response
+        except BaseException:
+            stream.close()
+            raise
     if not track or not track["meta_path"]:
         return redirect("/static/radio-logo.png")
     abs_path = os.path.join(META_PATH, track["meta_path"])
@@ -513,69 +542,60 @@ def serve_cover(track_id):
 @app.route("/admin/tracks/<int:track_id>/refetch-cover", methods=["POST"])
 @admin_required
 def refetch_cover(track_id):
-    db = get_db()
-    track = db.execute(
-        "SELECT source_url FROM tracks WHERE id = ?", (track_id,)
-    ).fetchone()
-    if not track:
-        db.close()
-        return redirect("/admin?err=Track+introuvable")
-    if not track["source_url"]:
-        db.close()
-        return redirect("/admin?err=Pas+d%27URL+source+pour+ce+track")
+    with _legacy_track_transaction(track_id) as db:
+        track = db.execute(
+            "SELECT source_url FROM tracks WHERE id = ?", (track_id,)
+        ).fetchone()
+        if not track:
+            return redirect("/admin?err=Track+introuvable")
+        if not track["source_url"]:
+            return redirect("/admin?err=Pas+d%27URL+source+pour+ce+track")
 
+    # Pre-existing missing download_og_image integration is intentionally not
+    # activated in lot 6D: restoring generic provider fetching needs its own review.
     img_name = download_og_image(track["source_url"], track_id, META_PATH)
     if img_name:
-        db.execute("UPDATE tracks SET meta_path = ? WHERE id = ?", (img_name, track_id))
-        db.commit()
-        db.close()
+        with _legacy_track_transaction(track_id) as db:
+            db.execute("UPDATE tracks SET meta_path = ? WHERE id = ?", (img_name, track_id))
         return redirect("/admin?ok=Image+r%C3%A9cup%C3%A9r%C3%A9e")
-    db.close()
     return redirect("/admin?err=%C3%89chec+de+r%C3%A9cup%C3%A9ration+%28OG+introuvable%29")
 
 
 @app.route("/admin/tracks/<int:track_id>/reintegrate", methods=["POST"])
 @admin_required
 def reintegrate_track(track_id):
-    db = get_db()
-    track = db.execute("SELECT id, status FROM tracks WHERE id = ?", (track_id,)).fetchone()
-    if not track:
-        db.close()
-        return redirect("/admin?err=Track+introuvable")
-    db.execute(
-        """UPDATE tracks
-           SET status='approved', reviewed_by=?, reviewed_at=CURRENT_TIMESTAMP,
-               rejection_reason=NULL, updated_at=CURRENT_TIMESTAMP
-           WHERE id=?""",
-        (session["user_id"], track_id),
-    )
-    db.commit()
-    db.close()
+    with _legacy_track_transaction(track_id) as db:
+        track = db.execute("SELECT id, status FROM tracks WHERE id = ?", (track_id,)).fetchone()
+        if not track:
+            return redirect("/admin?err=Track+introuvable")
+        db.execute(
+            """UPDATE tracks
+               SET status='approved', reviewed_by=?, reviewed_at=CURRENT_TIMESTAMP,
+                   rejection_reason=NULL, updated_at=CURRENT_TIMESTAMP
+               WHERE id=?""",
+            (session["user_id"], track_id),
+        )
     return redirect("/admin?status=rejected&ok=Track+r%C3%A9int%C3%A9gr%C3%A9")
 
 
 @app.route("/admin/tracks/<int:track_id>/delete", methods=["POST"])
 @admin_required
 def delete_track(track_id):
-    db = get_db()
-    track = db.execute(
-        "SELECT id, file_path, meta_path FROM tracks WHERE id = ?", (track_id,)
-    ).fetchone()
-    if not track:
-        db.close()
-        return redirect("/admin?err=Track+introuvable")
+    with _legacy_track_transaction(track_id) as db:
+        track = db.execute(
+            "SELECT id, file_path, meta_path FROM tracks WHERE id = ?", (track_id,)
+        ).fetchone()
+        if not track:
+            return redirect("/admin?err=Track+introuvable")
+        # Preserve the existing explicit legacy deletion action. Linked audio is
+        # refused above, before either history, track or file can be removed.
+        db.execute("DELETE FROM plays WHERE track_id = ?", (track_id,))
+        db.execute("DELETE FROM tracks WHERE id = ?", (track_id,))
 
-    # Supprime d'abord les diffusions liées (FK sans CASCADE dans le schéma)
-    db.execute("DELETE FROM plays WHERE track_id = ?", (track_id,))
-    db.execute("DELETE FROM tracks WHERE id = ?", (track_id,))
-    db.commit()
-    db.close()
-
-    # Efface le MP3 et la cover du disque (silencieux si absents)
+    # Efface le MP3 et la cover du disque (silencieux si absents), après COMMIT.
     for rel in (track["file_path"], track["meta_path"]):
         if not rel:
             continue
-        # file_path contient déjà "tracks/xxx.mp3", meta_path contient juste "1.jpg"
         if rel.startswith("tracks/") or rel.startswith("meta/"):
             abs_path = os.path.join(STORAGE_PATH, rel)
         else:
@@ -585,7 +605,6 @@ def delete_track(track_id):
                 os.unlink(abs_path)
         except Exception:
             pass
-
     return redirect("/admin?status=rejected&ok=Track+supprim%C3%A9+d%C3%A9finitivement")
 
 

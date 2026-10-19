@@ -1,5 +1,8 @@
 -- ═════════════════════════════════════════════
 -- SCHEMA — radio live collaborative
+-- Legacy baseline. db.init_db() applies versioned migrations after this file.
+-- Existing databases: python db.py migrate --database /path/to/database.sqlite
+-- Submission definitions live in migrations/001_submissions.sql (single source).
 -- ═════════════════════════════════════════════
 
 PRAGMA foreign_keys = ON;

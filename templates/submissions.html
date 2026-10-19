@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Mes propositions{% endblock %} — Digger Radio</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 55rem; margin: 2rem auto; padding: 0 1rem; color: #222; background: #fafafa; }
+    nav, .actions { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+    section, article { padding: 1.2rem; margin: 1rem 0; border: 1px solid #ddd; border-radius: .6rem; background: white; }
+    label { display: block; margin: 1rem 0; }
+    input:not([type=hidden]), select { display: block; box-sizing: border-box; width: 100%; padding: .6rem; margin: .3rem 0; }
+    button { padding: .6rem 1rem; cursor: pointer; } button:disabled { cursor: default; }
+    .error { color: #9b1717; } .success { color: #16652b; } .muted { color: #555; }
+    dt { font-weight: bold; margin-top: .7rem; } dd { margin-left: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+    a { overflow-wrap: anywhere; } .status { font-weight: bold; }
+  </style>
+</head>
+<body>
+  <nav aria-label="Navigation"><a href="{{ url_for('index') }}">Accueil et radio</a><a href="{{ url_for('contributions.dashboard') }}">Mes propositions</a></nav>
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+    <p class="{{ 'error' if category == 'error' else 'success' }}" role="status">{{ message }}</p>
+  {% endfor %}
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  {% block content %}
+  <h1>Mes propositions</h1>
+  <section aria-labelledby="new-proposal">
+    <h2 id="new-proposal">Proposer un morceau</h2>
+    <p>Collez le lien d’une vidéo YouTube ou d’un morceau Spotify. Aucun fichier audio n’est demandé à cette étape.</p>
+    <form method="post" action="{{ url_for('contributions.create') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Lien YouTube ou Spotify
+        <input type="url" name="source_url" required maxlength="4096" value="{{ source_url or '' }}" placeholder="https://…">
+      </label>
+      <button type="submit">Créer mon brouillon</button>
+    </form>
+  </section>
+  {% if page_data %}
+  <section aria-labelledby="proposal-list">
+    <h2 id="proposal-list">Mes propositions ({{ page_data.total }})</h2>
+    {% for item in page_data['items'] %}
+    <article>
+      <h3><a href="{{ url_for('contributions.show', submission_id=item.id) }}">{{ item.title or item.source_title or 'Proposition sans titre' }}</a></h3>
+      <p>{{ 'YouTube' if item.platform == 'youtube' else 'Spotify' }} · {{ item.created_at }}</p>
+      <p class="status">{{ status_labels.get(item.status, 'État indisponible') }}</p>
+      <p class="muted">{{ metadata_labels.get(item.metadata_status, 'État indisponible') }}</p>
+    </article>
+    {% else %}<p>Vous n’avez pas de proposition sur cette page.</p>{% endfor %}
+    <nav aria-label="Pagination">
+      {% if page_data.page > 1 %}<a rel="prev" href="{{ url_for('contributions.dashboard', page=page_data.page-1) }}">Page précédente</a>{% endif %}
+      <span>Page {{ page_data.page }} sur {{ page_data.pages }}</span>
+      {% if page_data.page < page_data.pages %}<a rel="next" href="{{ url_for('contributions.dashboard', page=page_data.page+1) }}">Page suivante</a>{% endif %}
+    </nav>
+  </section>
+  {% endif %}
+  {% endblock %}
+</body>
+</html>
