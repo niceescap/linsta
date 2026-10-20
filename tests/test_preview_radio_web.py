@@ -17,6 +17,7 @@ import private_radio
 import preview_editorial
 import private_radio_admin
 import preview_radio_runner
+from test_preview_manual_add import wav_bytes
 from preview_radio_web import ServiceController, PreviewError, UNIT
 import test_digger_publication as publication_fixture
 from test_media_storage import mp3_bytes, cover_bytes
@@ -50,6 +51,7 @@ class PreviewRoutesTests(unittest.TestCase):
         self.root = Path(self.temp.name) / 'private-radio'
         private_radio.initialize(self.root)
         private_radio_admin.migrate(self.root)
+        preview_editorial.migrate(self.root)
         conn = private_radio.connect(self.root)
         with conn:
             for i in range(1, 27):
@@ -103,6 +105,53 @@ class PreviewRoutesTests(unittest.TestCase):
         self.assertIn('Doublon',self.get('/admin/preview-radio?status=rejected').get_data(as_text=True))
         self.assertEqual(self.get('/admin/preview-radio?status=invalid').status_code,400)
 
+    def test_manual_add_admin_csrf_wav_cover_and_immediate_listing(self):
+        self.assertEqual(self.get('/admin/preview-radio/new').status_code,401)
+        self.session_user(1)
+        self.assertEqual(self.get('/admin/preview-radio/new').status_code,403)
+        self.session_user(2)
+        page=self.get('/admin/preview-radio/new')
+        self.assertEqual(page.status_code,200)
+        self.assertIn('+ Ajouter un track',self.get('/admin/preview-radio').get_data(as_text=True))
+        base={'title':'Manual web addition','artist':'Digger test','genre':'Soul','year':'2026',
+              'source_platform':'soundcloud','source_url':'https://soundcloud.com/test/track',
+              'internal_note':'private admin note','initial_status':'active','private_preview_confirmed':'on'}
+        invalid=dict(base,audio=(io.BytesIO(wav_bytes()),'track.wav'))
+        self.assertEqual(self.post('/admin/preview-radio/new',data=invalid,content_type='multipart/form-data').status_code,400)
+        data=dict(base,csrf_token=self.token(),audio=(io.BytesIO(wav_bytes()),'../../supplied.wav'),
+                  cover=(io.BytesIO(cover_bytes()),'cover.png'))
+        response=self.post('/admin/preview-radio/new',data=data,content_type='multipart/form-data')
+        self.assertEqual(response.status_code,303)
+        html=self.get('/admin/preview-radio?q=Manual+web+addition').get_data(as_text=True)
+        self.assertIn('Track ajouté avec succès',html)
+        self.assertIn('Manual web addition',html)
+        self.assertIn('ACTIF',html)
+        with sqlite3.connect(self.root/'catalogue.sqlite') as conn:
+            row=conn.execute("SELECT id,filename,source_platform,source_url,internal_note,cover_path,enabled FROM private_tracks WHERE title='Manual web addition'").fetchone()
+            event=conn.execute("SELECT action FROM private_catalogue_events WHERE track_id=?",(row[0],)).fetchone()[0]
+        self.assertTrue(row[1].startswith('digger-manual-') and row[1].endswith('.wav'))
+        self.assertEqual((row[2],row[3],row[4],row[6]),('soundcloud','https://soundcloud.com/test/track','private admin note',1))
+        self.assertTrue(row[5].startswith('covers/digger-cover-'))
+        self.assertEqual(event,'manual_admin_add')
+        cover_response=self.get(f'/preview-radio/tracks/{row[0]}/cover')
+        self.assertEqual(cover_response.status_code,200)
+        self.assertEqual(cover_response.mimetype,'image/png')
+        with sqlite3.connect(self.root/'catalogue.sqlite') as conn:
+            before=conn.execute('SELECT filename,sha256,size,revision,cover_path FROM private_tracks WHERE id=?',(row[0],)).fetchone()
+        audio_before=(self.root/before[0]).read_bytes()
+        edited=dict(csrf_token=self.token(),action='metadata',revision=str(before[3]),title='Edited manual track',
+            artist='Edited artist',genre='Jazz',year='2025',source_platform='spotify',
+            source_url='https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC',internal_note='updated private note',
+            cover=(io.BytesIO(cover_bytes('JPEG')),'replacement.jpg'))
+        self.assertEqual(self.post(f'/admin/preview-radio/tracks/{row[0]}/edit',data=edited,
+            content_type='multipart/form-data').status_code,303)
+        with sqlite3.connect(self.root/'catalogue.sqlite') as conn:
+            after=conn.execute('SELECT filename,sha256,size,revision,cover_path,title,source_platform,internal_note FROM private_tracks WHERE id=?',(row[0],)).fetchone()
+        self.assertEqual(after[:3],before[:3]); self.assertGreater(after[3],before[3])
+        self.assertNotEqual(after[4],before[4]); self.assertEqual(after[5:8],('Edited manual track','spotify','updated private note'))
+        self.assertEqual((self.root/after[0]).read_bytes(),audio_before)
+        self.assertEqual(self.get(f'/preview-radio/tracks/{row[0]}/cover').mimetype,'image/jpeg')
+
     def test_withdrawn_current_still_displayed_but_future_is_hidden(self):
         preview_editorial.migrate(self.root)
         self.session_user(1)
@@ -153,7 +202,7 @@ class PreviewRoutesTests(unittest.TestCase):
         self.assertIn('station.mp3', html)
         self.assertIn('invalide', html)
         self.assertNotIn('.DS_Store', html)
-        self.assertIn('26 tracks importés', html)
+        self.assertIn('26 tracks dans le catalogue', html)
 
     def test_home_player_hierarchy_and_removed_meter_assets(self):
         html = self.get('/').get_data(as_text=True)
@@ -246,7 +295,7 @@ class PreviewRoutesTests(unittest.TestCase):
         conn = sqlite3.connect(self.root / 'catalogue.sqlite')
         before_private = list(conn.iterdump())
         html = self.get('/admin/preview-radio').get_data(as_text=True)
-        self.assertIn('26 tracks importés', html)
+        self.assertIn('26 tracks dans le catalogue', html)
         self.assertIn('PREVIEW / TEST', html)
         self.assertEqual(html.count('<audio controls'), 26)
         self.assertIn('Actif — essai privé uniquement', html)

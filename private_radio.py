@@ -21,6 +21,7 @@ import secrets
 import signal
 import sqlite3
 import stat
+import subprocess
 import sys
 import threading
 import time
@@ -112,25 +113,39 @@ def initialize(root):
 
 
 def validate_file(root, name, *, digest=None, size=None):
-    if (not isinstance(name,str) or not name.lower().endswith('.mp3')
+    if (not isinstance(name,str) or not name.lower().endswith(('.mp3','.wav'))
             or len(name.encode('utf-8')) > 255 or '/' in name or '\\' in name
             or any(ord(c)<32 or ord(c)==127 for c in name)):
-        raise ValueError('Use a local MP3 basename, never a path, URL or control character')
+        raise ValueError('Use a local MP3/WAV basename, never a path, URL or control character')
     stream, snapshot = checked_open(root,name,sha256=digest,size=size)
     with stream:
         if snapshot[2] > 50*1024*1024 or os.fstat(stream.fileno()).st_nlink != 1:
-            raise ValueError('MP3 must have one link and be at most 50 MiB')
-        info = MP3(stream).info
-        if (info.layer != 3 or info.sketchy or info.channels not in (1,2)
-                or not math.isfinite(info.length) or not 0 < info.length <= 1800):
-            raise ValueError('Invalid or excessive MP3')
+            raise ValueError('Audio file must have one link and be at most 50 MiB')
+        if name.lower().endswith('.mp3'):
+            info = MP3(stream).info
+            duration = float(info.length)
+            if (info.layer != 3 or info.sketchy or info.channels not in (1,2)
+                    or not math.isfinite(duration) or not 0 < duration <= 1800):
+                raise ValueError('Invalid or excessive MP3')
+        else:
+            fd = stream.fileno()
+            result = subprocess.run(['ffprobe','-v','error','-show_entries','format=format_name,duration',
+                '-of','json',f'/proc/self/fd/{fd}'], pass_fds=(fd,), capture_output=True,
+                text=True, timeout=10, check=False, env={'PATH':os.defpath,'LC_ALL':'C'})
+            if result.returncode:
+                raise ValueError('Invalid WAV audio')
+            data = json.loads(result.stdout)['format']
+            duration = float(data['duration'])
+            if ('wav' not in data.get('format_name','').split(',') or not math.isfinite(duration)
+                    or not 0 < duration <= 1800):
+                raise ValueError('Invalid or excessive WAV')
         stream.seek(0)
         sha = hashlib.sha256()
         for chunk in iter(lambda:stream.read(65536),b''):
             sha.update(chunk)
         if identity(os.fstat(stream.fileno())) != snapshot:
-            raise ValueError('MP3 changed during validation')
-        return sha.hexdigest(), snapshot[2], float(info.length)
+            raise ValueError('Audio changed during validation')
+        return sha.hexdigest(), snapshot[2], duration
 
 
 def import_playlist(root, manifest, *, confirmed=False):

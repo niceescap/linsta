@@ -4,7 +4,7 @@ Description=Digger private PREVIEW radio (bounded test, no public listener)
 
 [Service]
 Type=exec
-WorkingDirectory=/home/jean/digger/instance/releases/digger-preview
+WorkingDirectory=/home/jean/digger/instance/releases/digger-manual-add
 Environment=PYTHONDONTWRITEBYTECODE=1
 UnsetEnvironment=GUNICORN_CMD_ARGS PYTHONPATH PYTHONHOME FLASK_APP FLASK_DEBUG
 ExecStart=/home/jean/digger/instance/demo/venv/bin/python -B -m preview_radio_runner --root /home/jean/digger/instance/demo/private-radio --seconds 3600

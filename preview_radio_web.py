@@ -3,8 +3,8 @@ from contextlib import contextmanager
 import io
 import json
 import math
-from pathlib import Path
 import re
+from pathlib import Path
 import sqlite3
 import preview_jingles
 import preview_editorial
@@ -12,13 +12,14 @@ import subprocess
 import time
 import warnings
 
-from flask import (Blueprint, current_app, jsonify, redirect, render_template,
+from flask import (Blueprint, current_app, flash, jsonify, redirect, render_template,
                    request, send_file, url_for)
 from mutagen.id3 import ID3, error as ID3Error
 from PIL import Image, ImageOps
 
 from audio_storage import StorageError, checked_open
 from private_radio import safe_root, SEGMENT
+import preview_manual_add
 
 UNIT = 'digger-preview-radio.service'
 DEFAULT_ROOT = '/home/jean/digger/instance/demo/private-radio'
@@ -81,11 +82,39 @@ def track(root, tid):
 
 
 def audio_file(root, row):
-    # A regular, unchanged MP3 attached to this catalogue; never a user path.
-    if not row['filename'].lower().endswith('.mp3'):
+    # A regular, unchanged supported audio file attached to this catalogue.
+    if not row['filename'].lower().endswith(('.mp3','.wav')):
         raise PreviewError('Fichier audio invalide.', 404)
     stream, _ = checked_open(root, row['filename'], sha256=row['sha256'], size=row['size'])
     return stream
+
+
+def private_cover(root, row):
+    cover_path = row.get('cover_path')
+    if not isinstance(cover_path, str) or not re.fullmatch(r'covers/digger-cover-[0-9a-f]{32}\.(?:jpg|png)', cover_path):
+        return None
+    try:
+        stream, snapshot = checked_open(Path(root)/'covers', cover_path.split('/',1)[1])
+    except StorageError:
+        return None
+    with stream:
+        if snapshot[2] > 4*1024*1024:
+            return None
+        raw = stream.read(4*1024*1024+1)
+    if len(raw) > 4*1024*1024:
+        return None
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(raw), formats=('JPEG','PNG')) as image:
+                if image.width > 4096 or image.height > 4096 or image.width*image.height > 4_000_000:
+                    return None
+                image.load()
+                if (image.format == 'PNG') != cover_path.endswith('.png'):
+                    return None
+        return raw, 'image/png' if cover_path.endswith('.png') else 'image/jpeg'
+    except (OSError, ValueError, Image.DecompressionBombWarning, Image.DecompressionBombError):
+        return None
 
 
 def read_small(root, name, limit):
@@ -175,6 +204,30 @@ def create_preview_blueprint(login_required, admin_required):
                                editorial_status=preview_editorial.status, reasons=preview_editorial.REASONS,
                                query=query, selected=selected)
 
+    @bp.get('/admin/preview-radio/new')
+    @admin_required
+    def new_track():
+        return render_template('preview_radio_new.html', platforms=preview_editorial.PLATFORMS,
+                               limits=current_app.config.get('MEDIA_LIMITS'))
+
+    @bp.post('/admin/preview-radio/new')
+    @admin_required
+    def create_track():
+        audio_upload = request.files.get('audio')
+        cover_upload = request.files.get('cover')
+        if audio_upload is None or not audio_upload.filename:
+            raise PreviewError('Fichier MP3 ou WAV requis.', 400)
+        try:
+            row = preview_manual_add.add_track(root(), request.form, audio_upload,
+                cover_upload if cover_upload and cover_upload.filename else None,
+                limits=current_app.config.get('MEDIA_LIMITS'))
+        except preview_manual_add.DuplicateTrack as error:
+            raise PreviewError(str(error), 409)
+        except (ValueError, StorageError) as error:
+            raise PreviewError(str(error), 400)
+        flash('Track ajouté avec succès', 'success')
+        return redirect(url_for('.index'), code=303)
+
     @bp.get('/admin/preview-radio/tracks/<int:track_id>/confirm')
     @admin_required
     def confirm_edit(track_id):
@@ -187,13 +240,31 @@ def create_preview_blueprint(login_required, admin_required):
     @bp.post('/admin/preview-radio/tracks/<int:track_id>/edit')
     @admin_required
     def edit_track(track_id):
+        replacement_path = None
+        cover_session = None
+        cover_upload = request.files.get('cover')
         try:
+            if cover_upload and cover_upload.filename:
+                replacement_path, cover_session = preview_manual_add.prepare_cover_replacement(
+                    root(), cover_upload, limits=current_app.config.get('MEDIA_LIMITS'))
             preview_editorial.change(root(),track_id,int(request.form.get('revision','')),
                 request.form.get('action'),title=request.form.get('title'),artist=request.form.get('artist'),
                 genre=request.form.get('genre',''),year=request.form.get('year'),
+                source_platform=request.form.get('source_platform') or None,
+                source_url=request.form.get('source_url') or None,
+                internal_note=request.form.get('internal_note',''),cover_path=replacement_path,
                 reason=request.form.get('reason'),confirm=request.form.get('confirm'))
+        except StorageError as error:
+            preview_manual_add.finish_cover_replacement(cover_session, keep=False)
+            raise PreviewError(str(error),400)
         except (ValueError, sqlite3.OperationalError) as error:
+            preview_manual_add.finish_cover_replacement(cover_session, keep=False)
             raise PreviewError(str(error),409)
+        except BaseException:
+            preview_manual_add.finish_cover_replacement(cover_session, keep=False)
+            raise
+        preview_manual_add.finish_cover_replacement(cover_session, keep=True)
+        flash('Modifications enregistrées', 'success')
         return redirect(url_for('.index'),code=303)
 
     @bp.post('/admin/preview-radio/start')
@@ -214,7 +285,9 @@ def create_preview_blueprint(login_required, admin_required):
         row = track(root(), track_id)
         stream = audio_file(root(), row)
         try:
-            response = send_file(stream, mimetype='audio/mpeg', download_name='preview.mp3',
+            is_wav = row['filename'].lower().endswith('.wav')
+            response = send_file(stream, mimetype='audio/wav' if is_wav else 'audio/mpeg',
+                                 download_name='preview.wav' if is_wav else 'preview.mp3',
                                  conditional=False, etag=False, max_age=0)
             response.content_length = row['size']
             response.make_conditional(request.environ, accept_ranges=True, complete_length=row['size'])
@@ -228,9 +301,13 @@ def create_preview_blueprint(login_required, admin_required):
     @login_required
     def cover(track_id):
         row = track(root(), track_id)
+        uploaded = private_cover(root(), row)
+        if uploaded:
+            output = io.BytesIO(uploaded[0])
+            return send_file(output, mimetype=uploaded[1], etag=False, max_age=0)
         with audio_file(root(), row) as stream:
             try:
-                pictures = ID3(stream).getall('APIC')
+                pictures = ID3(stream).getall('APIC') if row['filename'].lower().endswith('.mp3') else []
             except ID3Error:
                 pictures = []
         if pictures:

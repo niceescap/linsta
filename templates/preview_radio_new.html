@@ -1,0 +1,23 @@
+{% extends 'submissions.html' %}
+{% block title %}Ajouter un track — PREVIEW / TEST{% endblock %}
+{% block content %}
+<h1>Ajouter un track — PREVIEW / TEST</h1>
+<p><a href="{{ url_for('preview_radio.index') }}">← Retour au catalogue</a></p>
+<p>Ajout direct au catalogue radio privé. Cela ne valide aucun droit de diffusion publique et ne passe pas par les submissions.</p>
+<form method="post" enctype="multipart/form-data" action="{{ url_for('preview_radio.create_track') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label>Fichier audio MP3 ou WAV <input type="file" name="audio" required accept="audio/mpeg,audio/wav,.mp3,.wav"></label>
+  <p>Maximum {{ '%.0f'|format((limits.audio_bytes if limits else 10485760)/1048576) }} MiB, {{ limits.duration_seconds if limits else 600 }} secondes. Le contenu sera entièrement décodé avant ajout.</p>
+  <label>Cover JPG ou PNG (facultative) <input type="file" name="cover" accept="image/jpeg,image/png,.jpg,.jpeg,.png"></label>
+  <label>Titre <input type="text" name="title" required maxlength="256"></label>
+  <label>Artiste <input type="text" name="artist" required maxlength="256"></label>
+  <label>Genre <input type="text" name="genre" maxlength="256"></label>
+  <label>Année <input type="number" name="year" min="1000" max="9999"></label>
+  <label>Plateforme source <select name="source_platform"><option value="">Aucune</option>{% for value in ['youtube','spotify','soundcloud','autre'] %}<option value="{{ value }}">{{ value|capitalize }}</option>{% endfor %}</select></label>
+  <label>URL source <input type="url" name="source_url" maxlength="2048" placeholder="https://…"></label>
+  <label>Note interne <textarea name="internal_note" maxlength="2000"></textarea></label>
+  <label>Statut initial <select name="initial_status" required><option value="active">ACTIF — éligible au shuffle</option><option value="removed">NON DIFFUSÉ — conservé dans le catalogue</option></select></label>
+  <label><input type="checkbox" name="private_preview_confirmed" required> Je confirme que ce morceau peut être utilisé pour l’écoute privée PREVIEW / TEST. Cette confirmation ne vaut pas validation des droits de diffusion publique.</label>
+  <button type="submit">Ajouter le track</button>
+</form>
+{% endblock %}

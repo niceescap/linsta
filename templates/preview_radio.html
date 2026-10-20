@@ -4,6 +4,7 @@
 <h1>Catalogue radio privé — PREVIEW / TEST</h1>
 <p><a href="/admin">Retour à l’admin</a> · <a href="/">Lecteur d’accueil</a></p>
 <p>Aucune approbation juridique de diffusion publique. Ce catalogue est séparé des propositions contributeurs.</p>
+<p><a class="button" href="{{ url_for('preview_radio.new_track') }}" style="display:inline-block;padding:12px 18px;background:#d58b28;color:#17120b;font-weight:700;border-radius:5px;text-decoration:none">+ Ajouter un track</a></p>
 <section>
   <h2>Radio PREVIEW</h2>
   <p role="status">{{ state.message }} — {{ state.status }}</p>
@@ -24,7 +25,7 @@
     <li>{{ jingle.name }} — {% if jingle.duration %}{{ '%.2f'|format(jingle.duration) }} s{% else %}durée indisponible{% endif %} — <strong>{{ 'valide' if jingle.valid else 'invalide' }}</strong></li>
   {% else %}<li>Aucun jingle valide disponible : enchaînement direct des morceaux.</li>{% endfor %}</ul>
 </section>
-<h2>{{ tracks|length }} tracks importés</h2>
+<h2>{{ tracks|length }} tracks dans le catalogue</h2>
 <form method="get" class="catalogue-search">
   <label>Rechercher <input name="q" value="{{ query }}" placeholder="Titre ou artiste" maxlength="256"></label>
   <label>Statut <select name="status">
@@ -62,12 +63,16 @@
       {% if status!='rejected' %}<a href="{{ url_for('preview_radio.confirm_edit',track_id=track.id,action='reject') }}">Refuser</a>{% endif %}
     </div>
     <section id="edit-{{ track.id }}" class="catalogue-editor"><h4>Modifier les métadonnées</h4>
-      <form method="post" action="{{ url_for('preview_radio.edit_track',track_id=track.id) }}">
+      <form method="post" enctype="multipart/form-data" action="{{ url_for('preview_radio.edit_track',track_id=track.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="revision" value="{{ track.revision }}"><input type="hidden" name="action" value="metadata">
         <label>Titre <input name="title" value="{{ track.title }}" required maxlength="256"></label>
         <label>Artiste <input name="artist" value="{{ track.artist }}" required maxlength="256"></label>
         <label>Genre <input name="genre" value="{{ track.genre|default('') }}" maxlength="256"></label>
         <label>Année <input name="year" type="number" min="1000" max="9999" value="{{ track.year or '' }}"></label>
+        <label>Plateforme source <select name="source_platform"><option value="">Aucune</option>{% for value in ['youtube','spotify','soundcloud','autre'] %}<option value="{{ value }}" {% if track.source_platform==value %}selected{% endif %}>{{ value|capitalize }}</option>{% endfor %}</select></label>
+        <label>URL source <input name="source_url" type="url" maxlength="2048" value="{{ track.source_url or '' }}"></label>
+        <label>Note interne <textarea name="internal_note" maxlength="2000">{{ track.internal_note or '' }}</textarea></label>
+        <label>Remplacer la cover <input name="cover" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png"></label>
         <button>Enregistrer</button>
       </form>
     </section>

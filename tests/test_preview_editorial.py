@@ -43,10 +43,12 @@ class EditorialTests(unittest.TestCase):
         self.assertEqual([{k:r[k] for k in before[0]} for r in after], before)
         self.assertTrue(all(r['genre']=='' and r['year'] is None and r['rejection_reason'] is None for r in after))
         with sqlite3.connect(self.root/'catalogue.sqlite') as conn:
-            self.assertEqual(conn.execute('pragma user_version').fetchone()[0],2)
+            self.assertEqual(conn.execute('pragma user_version').fetchone()[0],3)
             self.assertEqual(conn.execute('select count(*) from private_plays').fetchone()[0],1)
             for sql in ('UPDATE private_tracks SET year=999','UPDATE private_tracks SET rejection_reason="invalid"'):
                 with self.assertRaises(sqlite3.IntegrityError):conn.execute(sql)
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("UPDATE private_tracks SET source_platform='bandcamp'")
 
     def test_metadata_status_audit_and_no_audio_writes_even_during_radio_lock(self):
         editorial.migrate(self.root)
