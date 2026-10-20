@@ -137,7 +137,7 @@
     for (const [id, value] of [['track-elapsed', clamped], ['track-duration', valid ? duration : NaN],
                               ['track-remaining', valid ? duration - clamped : NaN]]) {
       const element = document.getElementById(id);
-      if (element) element.textContent = formatTime(value);
+      if (element) element.textContent = (id === 'track-remaining' && Number.isFinite(value) ? '-' : '') + formatTime(value);
     }
     if (progressFill) progressFill.style.width = valid && Number.isFinite(clamped) ? clamped / duration * 100 + '%' : '0%';
   }

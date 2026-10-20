@@ -90,7 +90,7 @@ function fixture(native, loggedIn = true) {
       timing_available:true, playback_started_at:1000, next_track_id:2});
     assert.equal(f.elements['track-elapsed'].textContent, '02:18');
     assert.equal(f.elements['track-duration'].textContent, '05:39');
-    assert.equal(f.elements['track-remaining'].textContent, '03:21');
+    assert.equal(f.elements['track-remaining'].textContent, '-03:21');
     assert.ok(f.calls.fetch.at(-1).url.includes('?at=1138'));
     f.audio.listeners.timeupdate();
     assert.equal(f.elements['track-elapsed'].textContent, '02:18');
@@ -102,7 +102,7 @@ function fixture(native, loggedIn = true) {
     else f.instances[0].playingDate = new Date(1340000);
     await f.refresh({available: true, track_id: 2, title: 'Next real', artist: 'Next artist', next_track_id: 3, next_title: 'Third', duration:180, timing_available:true, playback_started_at:1339});
     assert.equal(f.elements['track-elapsed'].textContent, '00:01');
-    assert.equal(f.elements['track-remaining'].textContent, '02:59');
+    assert.equal(f.elements['track-remaining'].textContent, '-02:59');
     assert.equal(f.elements['np-title'].textContent, 'Next real');
     assert.equal(f.elements['next-title'].textContent, 'Third');
     await f.refresh({available: true, track_id: 2, title: 'Next real'});

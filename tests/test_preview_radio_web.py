@@ -77,6 +77,17 @@ class PreviewRoutesTests(unittest.TestCase):
         self.controller.state = 'active'
         return started
 
+    def test_home_player_hierarchy_and_removed_meter_assets(self):
+        html = self.get('/').get_data(as_text=True)
+        markers = ['PREVIEW / TEST', 'id="np-cover"', 'id="np-title"', 'id="np-artist"',
+                   'SELECTED BY DIGGER', 'id="progressFill"', 'id="track-elapsed"',
+                   'id="track-duration"', 'id="track-remaining"', 'id="next-track"', 'id="playBtn"']
+        positions = [html.index(marker) for marker in markers]
+        self.assertEqual(positions, sorted(positions))
+        for forbidden in ('Analyse après Play', 'audio-meter', 'vu-left', 'vu-right', 'vu-channel'):
+            self.assertNotIn(forbidden, html)
+        self.assertEqual(self.get('/static/js/audio-meter.js').status_code, 404)
+
     def test_audible_position_resolves_previous_track_and_real_next(self):
         self.session_user(1)
         started = self.publish()

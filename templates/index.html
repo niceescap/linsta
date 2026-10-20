@@ -25,14 +25,16 @@
       <div class="meta">
         <h1 id="np-title" class="title">Chargement du flux…</h1>
         <div id="np-artist" class="artist">—</div>
+        <div class="badge">SELECTED BY DIGGER</div>
         <p id="player-status" class="muted" role="status" aria-live="polite">{% if preview_radio_enabled|default(false) and not user %}Connectez-vous avec un compte de test pour écouter la PREVIEW.{% else %}Appuyez sur lecture pour écouter.{% endif %}</p>
       </div>
       <div class="progress">
         <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
       </div>
-      <div class="track-times"><span id="track-elapsed">--:--</span> / <span id="track-duration">--:--</span><div>Reste <span id="track-remaining">--:--</span></div></div>
-      <div class="controls">
-        <button id="playBtn" class="play-btn" type="button" aria-label="Écouter le direct" aria-pressed="false" {% if not radio_enabled|default(true) %}disabled{% endif %}>▶</button>
+      <div class="track-times">
+        <div><span id="track-elapsed">--:--</span><small>écoulé</small></div>
+        <div><span id="track-duration">--:--</span><small>total</small></div>
+        <div><span id="track-remaining">--:--</span><small>restant</small></div>
       </div>
       {% if preview_radio_enabled|default(false) %}
       <div id="next-track" class="next-track" hidden>
@@ -40,6 +42,9 @@
         <div class="next-details"><img id="next-cover" src="/static/digger-icon.png" alt="Pochette du prochain morceau"><div><strong id="next-title"></strong><div id="next-artist" class="muted"></div></div></div>
       </div>
       {% endif %}
+      <div class="controls">
+        <button id="playBtn" class="play-btn" type="button" aria-label="Écouter le direct" aria-pressed="false" {% if not radio_enabled|default(true) %}disabled{% endif %}>▶</button>
+      </div>
       <div class="volume">
         <label for="volumeInput">Volume</label>
         <input id="volumeInput" type="range" min="0" max="100" value="80">
