@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import sqlite3
 import preview_jingles
+import preview_editorial
 import subprocess
 import time
 import warnings
@@ -164,10 +165,36 @@ def create_preview_blueprint(login_required, admin_required):
     @bp.get('/admin/preview-radio')
     @admin_required
     def index():
-        with catalogue(root()) as conn:
-            rows = [dict(row) for row in conn.execute('SELECT * FROM private_tracks ORDER BY position')]
+        query, selected = request.args.get('q', ''), request.args.get('status', 'all')
+        try:
+            rows = preview_editorial.listing(root(), query=query, state=selected)
+        except ValueError as error:
+            raise PreviewError(str(error), 400)
         state = health(root(), controller())
-        return render_template('preview_radio.html', tracks=rows, state=state, jingles=preview_jingles.scan(root()))
+        return render_template('preview_radio.html', tracks=rows, state=state, jingles=preview_jingles.scan(root()),
+                               editorial_status=preview_editorial.status, reasons=preview_editorial.REASONS,
+                               query=query, selected=selected)
+
+    @bp.get('/admin/preview-radio/tracks/<int:track_id>/confirm')
+    @admin_required
+    def confirm_edit(track_id):
+        action = request.args.get('action')
+        if action not in ('remove', 'reject'):
+            raise PreviewError('Action invalide.', 400)
+        return render_template('preview_radio_confirm.html', track=track(root(),track_id), action=action,
+                               reasons=preview_editorial.REASONS)
+
+    @bp.post('/admin/preview-radio/tracks/<int:track_id>/edit')
+    @admin_required
+    def edit_track(track_id):
+        try:
+            preview_editorial.change(root(),track_id,int(request.form.get('revision','')),
+                request.form.get('action'),title=request.form.get('title'),artist=request.form.get('artist'),
+                genre=request.form.get('genre',''),year=request.form.get('year'),
+                reason=request.form.get('reason'),confirm=request.form.get('confirm'))
+        except (ValueError, sqlite3.OperationalError) as error:
+            raise PreviewError(str(error),409)
+        return redirect(url_for('.index'),code=303)
 
     @bp.post('/admin/preview-radio/start')
     @admin_required
@@ -268,8 +295,7 @@ def create_preview_blueprint(login_required, admin_required):
                                   cover_url=url_for('static', filename='digger-icon.png'))
                 elif type(data.get('track_id')) is int:
                     row = track(root(), data['track_id'])
-                    if not row['enabled'] or row['removed_at'] is not None:
-                        raise ValueError('Inactive track')
+                    # A withdrawn current item finishes normally; only future selection is filtered.
                     result.update(type='track', track_id=row['id'], title=row['title'], artist=row['artist'],
                                   duration=row['duration'], cover_url=url_for('.cover', track_id=row['id']))
                 else:
@@ -280,7 +306,7 @@ def create_preview_blueprint(login_required, admin_required):
                 if type(data.get('next_track_id')) is int:
                     try:
                         following = track(root(), data['next_track_id'])
-                        if following['enabled'] and following['removed_at'] is None:
+                        if preview_editorial.eligible(following):
                             result.update(next_track_id=following['id'], next_title=following['title'],
                                           next_artist=following['artist'],
                                           next_cover_url=url_for('.cover', track_id=following['id']))

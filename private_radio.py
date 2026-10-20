@@ -33,6 +33,7 @@ from mutagen.mp3 import MP3
 from mutagen import MutagenError
 from preview_schedule import ShuffleCycle
 import preview_jingles
+import preview_editorial
 
 ROOT = Path(__file__).resolve().parent / 'instance/demo/private-radio'
 PORT = 17001
@@ -166,6 +167,8 @@ def tracks(root):
     try:
         columns = {row['name'] for row in conn.execute('PRAGMA table_info(private_tracks)')}
         selection = ' AND enabled=1 AND removed_at IS NULL' if 'enabled' in columns else ''
+        if 'rejection_reason' in columns:
+            selection += ' AND rejection_reason IS NULL'
         result = [dict(row) for row in conn.execute(
             'SELECT * FROM private_tracks WHERE private_rights_confirmed=1'+selection+' ORDER BY position')]
     finally:
@@ -259,16 +262,56 @@ def play_loop(root, worker, *, seconds, engine=None):
     timer.start()
     conn = connect(root)
     current = None
+    timing_lock = threading.RLock()
+    live = {}
     timeline = {'started_at': time.time(), 'origin': None, 'tracks': []}
-    def publish_timing(offset, metadata, origin):
-        if origin is not None:
-            timeline['origin'] = origin
-        if metadata is not None:
-            timeline['tracks'].append(dict(metadata, offset=offset))
-            timeline['tracks'] = timeline['tracks'][-128:]
+    def save_timing():
         temporary = root/'hls/timeline.json.tmp'
         temporary.write_text(json.dumps(timeline))
         os.replace(temporary, root/'hls/timeline.json')
+    def publish_timing(offset, metadata, origin):
+        with timing_lock:
+            if origin is not None:
+                timeline['origin'] = origin
+            if metadata is not None:
+                timeline['tracks'].append(dict(metadata, offset=offset))
+                timeline['tracks'] = timeline['tracks'][-128:]
+            save_timing()
+    def state_signature(metadata, duration, following):
+        return json.dumps([metadata,duration,following],sort_keys=True)
+    def publish_item(metadata, duration, following):
+        live.update(metadata=metadata, duration=duration, started_at=time.time(), following=following,
+                    signature=state_signature(metadata,duration,following))
+        if hasattr(engine, 'timeline_callback'):
+            engine.pending_track = metadata
+        worker.write_state(dict(metadata, genre_slug='station-id' if metadata.get('type')=='jingle' else 'private-test'),
+                           live['started_at'], duration, next_track=following)
+    def refresh_schedule():
+        rows = [r for r in preview_editorial.listing(root) if preview_editorial.eligible(r)]
+        with timing_lock:
+            previous = schedule.next_track
+            schedule.refresh(rows)
+            following = schedule.next_track
+            if live:
+                item = live['metadata']
+                # Preserve identity/audio of the current item even if just withdrawn.
+                updated = next((r for r in rows if r['id']==item['id']), None)
+                if updated:
+                    item.update(title=updated['title'], artist=updated['artist'])
+                item['next_track_id'] = following['id'] if following else None
+                previous_id = previous['id'] if previous else None
+                if previous_id != item['next_track_id']:
+                    recent = timeline['tracks'][-2:] if item.get('type')=='jingle' else timeline['tracks'][-1:]
+                    for entry in recent:
+                        if entry['next_track_id']==previous_id:
+                            entry['next_track_id']=item['next_track_id']
+                    save_timing()
+                signature = state_signature(item,live['duration'],following)
+                if signature != live['signature']:
+                    worker.write_state(dict(item,genre_slug='station-id' if item.get('type')=='jingle' else 'private-test'),
+                                       live['started_at'],live['duration'],next_track=following)
+                    live['signature'] = signature
+                live['following'] = following
     if hasattr(engine, 'timeline_callback'):
         engine.timeline_callback = publish_timing
     try:
@@ -277,24 +320,35 @@ def play_loop(root, worker, *, seconds, engine=None):
         engine.start()
         schedule = ShuffleCycle(playlist)
         jingles = preview_jingles.JinglePicker(preview_jingles.scan(root))
+        if hasattr(engine, 'control_callback'):
+            engine.control_callback = refresh_schedule
         while not worker.STOP:
+            refresh_schedule()
             track, next_track = schedule.current, schedule.next_track
+            # Recheck before decoding; never select an ineligible reservation.
+            if not any(r['id']==track['id'] and preview_editorial.eligible(r)
+                       for r in preview_editorial.listing(root)):
+                schedule.advance()
+                if schedule.current is None:
+                    break
+                continue
             validate_file(root,track['filename'],digest=track['sha256'],size=track['size'])
             current = conn.execute('INSERT INTO private_plays(track_id) VALUES (?)',(track['id'],)).lastrowid
             conn.commit()
             metadata = dict(id=track['id'],title=track['title'],artist=track['artist'],
-                            duration=track['duration'], next_track_id=next_track['id'], type='track')
-            if hasattr(engine, 'timeline_callback'):
-                engine.pending_track = metadata
-            worker.write_state(dict(id=track['id'],title=track['title'],artist=track['artist'],genre_slug='private-test'),
-                               time.time(),track['duration'],next_track=next_track)
+                            duration=track['duration'], next_track_id=next_track['id'] if next_track else None, type='track')
+            publish_item(metadata, track['duration'], next_track)
             if not engine.play(str(root/track['filename'])) and not worker.STOP:
                 raise ValueError('Private track decode failed; stopped instead of silently approving other media')
             conn.execute('UPDATE private_plays SET ended_at=CURRENT_TIMESTAMP WHERE id=?',(current,))
             conn.commit()
             current = None
-            # The already committed next track survives the station ID unchanged.
-            jingle = jingles.choose() if not worker.STOP else None
+            refresh_schedule()
+            next_track = schedule.next_track
+            if next_track is None or worker.STOP:
+                break
+            # The valid committed next track survives the station ID unchanged.
+            jingle = jingles.choose()
             if jingle is not None:
                 folder = preview_jingles.directory(root)
                 try:
@@ -306,14 +360,15 @@ def play_loop(root, worker, *, seconds, engine=None):
                 metadata = dict(id=None, title='Digger Radio', artist='Station ID', type='jingle',
                                 duration=jingle['duration'], next_track_id=next_track['id'],
                                 jingle_name=jingle['name'])
-                if hasattr(engine, 'timeline_callback'):
-                    engine.pending_track = metadata
-                worker.write_state(dict(metadata, genre_slug='station-id'), time.time(),
-                                   jingle['duration'], next_track=next_track)
+                publish_item(metadata, jingle['duration'], next_track)
                 print(f"[preview] jingle={jingle['name']} next_track_id={next_track['id']}", flush=True)
                 if not engine.play(str(folder/jingle['name'])) and not worker.STOP:
                     raise ValueError('Private jingle decode failed; stopped safely')
+            refresh_schedule()
             schedule.advance()
+            live.clear()
+            if schedule.current is None:
+                break
     finally:
         timer.cancel()
         engine.stop()

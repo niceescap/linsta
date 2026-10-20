@@ -131,6 +131,8 @@ def stop_process(proc):
 
 class Engine:
     def __init__(self, *, threads=None, continuous=False):
+        self.control_callback = None
+        self.last_control = 0
         self.timeline_callback = None  # Opt-in private preview timing only.
         self.pending_track = None
         self.pcm_seconds = 0.0
@@ -179,6 +181,11 @@ class Engine:
             self.pcm_queue.task_done()
 
     def check(self):
+        if self.control_callback is not None and threading.current_thread() is not self.pump:
+            control_now = time.monotonic()
+            if control_now - self.last_control >= 0.5:
+                self.last_control = control_now
+                self.control_callback()
         if self.pump_error is not None:
             raise PipelineError(str(self.pump_error))
         if self.encoder is None or self.encoder.poll() is not None:

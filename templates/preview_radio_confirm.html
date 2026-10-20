@@ -1,0 +1,12 @@
+{% extends 'submissions.html' %}
+{% block title %}Confirmation éditoriale{% endblock %}
+{% block content %}
+<h1>{{ 'Refuser' if action=='reject' else 'Retirer' }} — {{ track.title }}</h1>
+<p>{{ track.artist }}. Le fichier audio et l’historique seront conservés. Si le morceau joue déjà, il pourra terminer.</p>
+<form method="post" action="{{ url_for('preview_radio.edit_track',track_id=track.id) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="revision" value="{{ track.revision }}"><input type="hidden" name="action" value="{{ action }}">
+{% if action=='reject' %}<label>Motif obligatoire <select name="reason" required><option value="">Choisir un motif</option>{% for value,label in reasons.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>{% endif %}
+<label><input type="checkbox" name="confirm" value="{{ track.id }}" required> Je confirme {{ 'le refus' if action=='reject' else 'le retrait' }} de ce morceau.</label>
+<button>Confirmer</button> <a href="{{ url_for('preview_radio.index') }}">Annuler</a>
+</form>
+{% endblock %}

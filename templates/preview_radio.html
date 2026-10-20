@@ -25,15 +25,54 @@
   {% else %}<li>Aucun jingle valide disponible : enchaînement direct des morceaux.</li>{% endfor %}</ul>
 </section>
 <h2>{{ tracks|length }} tracks importés</h2>
+<form method="get" class="catalogue-search">
+  <label>Rechercher <input name="q" value="{{ query }}" placeholder="Titre ou artiste" maxlength="256"></label>
+  <label>Statut <select name="status">
+    {% for value,label in [('all','Tous'),('active','Actifs'),('removed','Retirés'),('rejected','Refusés')] %}
+    <option value="{{ value }}" {% if selected==value %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select></label><button>Rechercher</button>
+</form>
+<style>
+.catalogue-row{display:flex;gap:14px;padding:14px 0;border-bottom:1px solid #393126;align-items:flex-start}
+.catalogue-row>img{width:56px;height:56px;object-fit:cover;border-radius:6px}
+.catalogue-body{flex:1;min-width:0}.catalogue-row h3{margin:0 0 4px;overflow-wrap:anywhere}
+.catalogue-row p{margin:4px 0;font-size:.85rem}.catalogue-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.catalogue-actions form{margin:0}.catalogue-editor{display:none;margin-top:8px}.catalogue-editor:target{display:block}.catalogue-editor input{max-width:100%;display:block}
+.catalogue-row audio{height:28px;width:210px;max-width:100%;margin-top:8px}
+.catalogue-search{display:flex;gap:12px;flex-wrap:wrap;align-items:end}.catalogue-status{color:#d9a441;font-weight:bold;letter-spacing:.06em}
+</style>
 {% for track in tracks %}
-<article>
-  <img src="{{ url_for('preview_radio.cover',track_id=track.id) }}" alt="Cover" width="80" height="80" loading="lazy" style="object-fit:cover">
-  <h3>{{ track.title }}</h3>
-  <p>{{ track.artist }} · {{ '%d:%02d'|format((track.duration // 60)|int,(track.duration % 60)|int) }}</p>
-  <p><strong>{% if track.removed_at %}Retiré{% elif not track.private_rights_confirmed %}Non éligible au test{% elif track.enabled %}Actif — essai privé uniquement{% else %}Désactivé{% endif %}</strong></p>
-  {% if track.private_rights_confirmed %}
-  <audio controls preload="none" src="{{ url_for('preview_radio.audio',track_id=track.id) }}" aria-label="Écouter {{ track.title }} en privé"></audio>
-  {% endif %}
+{% set status=editorial_status(track) %}
+<article class="catalogue-row" data-track-id="{{ track.id }}">
+  <img src="{{ url_for('preview_radio.cover',track_id=track.id) }}" alt="Cover" width="56" height="56" loading="lazy">
+  <div class="catalogue-body">
+    <h3>{{ track.title }}</h3>
+    <p>{{ track.artist }} · {{ track.genre|default('') or 'Genre non renseigné' }} · {{ '%d:%02d'|format((track.duration // 60)|int,(track.duration % 60)|int) }}{% if track.year %} · {{ track.year }}{% endif %}</p>
+    <p class="catalogue-status">{{ {'active':'ACTIF','removed':'RETIRÉ','rejected':'REFUSÉ'}[status] }}</p>
+    {% if status=='active' %}<span hidden>Actif — essai privé uniquement</span>{% endif %}
+    {% if track.rejection_reason %}<p>Motif : {{ reasons.get(track.rejection_reason,track.rejection_reason) }}</p>{% endif %}
+    <div class="catalogue-actions">
+      <a class="edit-toggle" href="#edit-{{ track.id }}">Modifier</a>
+      {% if status=='active' %}<a href="{{ url_for('preview_radio.confirm_edit',track_id=track.id,action='remove') }}">Retirer</a>{% endif %}
+      {% if status=='removed' %}
+      <form method="post" action="{{ url_for('preview_radio.edit_track',track_id=track.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="revision" value="{{ track.revision }}"><input type="hidden" name="action" value="restore"><button>Remettre en diffusion</button>
+      </form>{% endif %}
+      {% if status!='rejected' %}<a href="{{ url_for('preview_radio.confirm_edit',track_id=track.id,action='reject') }}">Refuser</a>{% endif %}
+    </div>
+    <section id="edit-{{ track.id }}" class="catalogue-editor"><h4>Modifier les métadonnées</h4>
+      <form method="post" action="{{ url_for('preview_radio.edit_track',track_id=track.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="revision" value="{{ track.revision }}"><input type="hidden" name="action" value="metadata">
+        <label>Titre <input name="title" value="{{ track.title }}" required maxlength="256"></label>
+        <label>Artiste <input name="artist" value="{{ track.artist }}" required maxlength="256"></label>
+        <label>Genre <input name="genre" value="{{ track.genre|default('') }}" maxlength="256"></label>
+        <label>Année <input name="year" type="number" min="1000" max="9999" value="{{ track.year or '' }}"></label>
+        <button>Enregistrer</button>
+      </form>
+    </section>
+    {% if track.private_rights_confirmed %}<audio controls preload="none" src="{{ url_for('preview_radio.audio',track_id=track.id) }}" aria-label="Écouter {{ track.title }} en privé"></audio>{% endif %}
+  </div>
 </article>
-{% else %}<p>Aucun titre importé.</p>{% endfor %}
+{% else %}<p>Aucun titre correspondant.</p>{% endfor %}
 {% endblock %}

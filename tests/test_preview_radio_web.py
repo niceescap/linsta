@@ -14,6 +14,7 @@ from unittest.mock import patch
 from mutagen.id3 import ID3, APIC
 from PIL import Image
 import private_radio
+import preview_editorial
 import private_radio_admin
 import preview_radio_runner
 from preview_radio_web import ServiceController, PreviewError, UNIT
@@ -76,6 +77,41 @@ class PreviewRoutesTests(unittest.TestCase):
         (hls / 'now.json').write_text(json.dumps({'track_id': 1, 'started_at': started + 0.5}))
         self.controller.state = 'active'
         return started
+
+    def test_editorial_controls_search_filters_and_permissions(self):
+        preview_editorial.migrate(self.root)
+        path='/admin/preview-radio/tracks/1/edit'
+        self.assertEqual(self.post(path,data={'csrf_token':self.token(),'action':'remove','revision':'0','confirm':'1'}).status_code,401)
+        self.session_user(1)
+        self.assertEqual(self.post(path,data={'csrf_token':self.token(),'action':'remove','revision':'0','confirm':'1'}).status_code,403)
+        self.session_user(2)
+        self.assertEqual(self.post(path,data={'action':'remove','revision':'0','confirm':'1'}).status_code,400)
+        data=dict(csrf_token=self.token(),action='metadata',revision='0',title='Jazz title',artist='Artist X',genre='Jazz',year='2026')
+        self.assertEqual(self.post(path,data=data).status_code,303)
+        html=self.get('/admin/preview-radio?q=Artist+X').get_data(as_text=True)
+        self.assertIn('Jazz title',html)
+        self.assertIn('Jazz',html)
+        self.assertNotIn('data-track-id="2"',html)
+        self.assertEqual(self.get('/admin/preview-radio/tracks/1/confirm?action=remove').status_code,200)
+        self.assertEqual(self.post(path,data=dict(csrf_token=self.token(),action='remove',revision='1')).status_code,409)
+        self.assertEqual(self.post(path,data=dict(csrf_token=self.token(),action='remove',revision='1',confirm='1')).status_code,303)
+        self.assertIn('Remettre en diffusion',self.get('/admin/preview-radio?status=removed').get_data(as_text=True))
+        self.assertEqual(self.post(path,data=dict(csrf_token=self.token(),action='restore',revision='2')).status_code,303)
+        self.assertEqual(self.post(path,data=dict(csrf_token=self.token(),action='reject',revision='3',confirm='1')).status_code,409)
+        self.assertEqual(self.post(path,data=dict(csrf_token=self.token(),action='reject',revision='3',confirm='1',reason='doublon')).status_code,303)
+        self.assertIn('REFUSÉ',self.get('/admin/preview-radio?status=rejected').get_data(as_text=True))
+        self.assertIn('Doublon',self.get('/admin/preview-radio?status=rejected').get_data(as_text=True))
+        self.assertEqual(self.get('/admin/preview-radio?status=invalid').status_code,400)
+
+    def test_withdrawn_current_still_displayed_but_future_is_hidden(self):
+        preview_editorial.migrate(self.root)
+        self.session_user(1)
+        started=self.publish()
+        (self.root/'hls/now.json').write_text(json.dumps(dict(track_id=1,next_track_id=2,started_at=started+.1)))
+        for tid in (1,2):preview_editorial.change(self.root,tid,0,'remove',confirm=str(tid))
+        data=self.get('/preview-radio/now-playing').get_json()
+        self.assertEqual(data['track_id'],1)
+        self.assertIsNone(data['next_track_id'])
 
     def test_jingle_now_playing_and_audible_transition_keep_next(self):
         self.session_user(1)
