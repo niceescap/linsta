@@ -97,6 +97,19 @@ class EditorialTests(unittest.TestCase):
         self.assertEqual(editorial.listing(self.root,query='aRTIST 3')[0]['id'],3)
         self.assertEqual(editorial.listing(self.root,query='Title 4')[0]['id'],4)
 
+    def test_removing_reservation_at_cycle_boundary_avoids_immediate_repeat(self):
+        rows=[dict(id=i) for i in (1,2,3)]
+        schedule=ShuffleCycle(rows,rng=random.Random(2))
+        # Track 3 finishes the old cycle; 1 is reserved from the new cycle.
+        schedule.current=rows[2]
+        schedule.next_track=rows[0]
+        schedule.remaining=[rows[2],rows[1]]
+        schedule.drawn={1}
+        schedule.refresh(rows[1:])
+        self.assertEqual(schedule.current['id'],3)
+        self.assertEqual(schedule.next_track['id'],2)
+        self.assertEqual([r['id'] for r in schedule.remaining],[3])
+
     def test_engine_updates_reserved_next_during_track_and_jingle_without_cutting(self):
         editorial.migrate(self.root)
         played=[]; next_ids=[]; current_done=[]

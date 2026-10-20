@@ -26,6 +26,13 @@ class ShuffleCycle:
                 # Swap with a uniformly selected other position, never redraw forever.
                 index = self.rng.randrange(1, len(self.remaining))
                 self.remaining[0], self.remaining[index] = self.remaining[index], self.remaining[0]
+        # A withdrawn reservation can expose the previous cycle's last item.
+        # Keep the remaining cycle intact while preferring a different next item.
+        if previous and self.remaining[0]['id'] == previous['id']:
+            alternatives = [i for i,item in enumerate(self.remaining) if item['id'] != previous['id']]
+            if alternatives:
+                index = self.rng.choice(alternatives)
+                self.remaining[0],self.remaining[index] = self.remaining[index],self.remaining[0]
         selected = self.remaining.pop(0)
         self.drawn.add(selected['id'])
         return selected

@@ -80,3 +80,8 @@ Suite historique conservée pour HLS, jingles, Safari/hls.js et droits.
 
 Résultats pré-déploiement : 459 tests Python en 94,874 s (458 réussis, 1 ignoré).
 Trois suites Node passent ; git diff --check sans erreur.
+
+Contrôle final : correction du cas de réservation retirée à la frontière de deux
+cycles, en conservant les éléments restants et en évitant une répétition immédiate
+si une alternative reste disponible. Dix tests ciblés supplémentaires passent
+en 10,297 s, dont le pipeline FFmpeg avec retrait/refus pendant le courant.
