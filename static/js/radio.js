@@ -161,8 +161,9 @@
         if (!ready) unavailable(previewMessage);
         else if (!wantsPlayback) message('Appuyez sur Play pour écouter la PREVIEW');
       }
-      updateNext(previewMode && ready && data.track_id ? data : {});
-      if (!data.track_id) {
+      const hasItem = Boolean(data.track_id) || data.type === 'jingle';
+      updateNext(previewMode && ready && hasItem ? data : {});
+      if (!hasItem) {
         metadata = null;
         renderProgress();
         titleEl.textContent = data.message || 'En attente du flux…';

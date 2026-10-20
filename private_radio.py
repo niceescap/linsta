@@ -30,7 +30,9 @@ import urllib.error
 
 from audio_storage import checked_open, identity
 from mutagen.mp3 import MP3
+from mutagen import MutagenError
 from preview_schedule import ShuffleCycle
+import preview_jingles
 
 ROOT = Path(__file__).resolve().parent / 'instance/demo/private-radio'
 PORT = 17001
@@ -274,13 +276,14 @@ def play_loop(root, worker, *, seconds, engine=None):
         publish_timing(None, None, None)
         engine.start()
         schedule = ShuffleCycle(playlist)
+        jingles = preview_jingles.JinglePicker(preview_jingles.scan(root))
         while not worker.STOP:
             track, next_track = schedule.current, schedule.next_track
             validate_file(root,track['filename'],digest=track['sha256'],size=track['size'])
             current = conn.execute('INSERT INTO private_plays(track_id) VALUES (?)',(track['id'],)).lastrowid
             conn.commit()
             metadata = dict(id=track['id'],title=track['title'],artist=track['artist'],
-                            duration=track['duration'], next_track_id=next_track['id'])
+                            duration=track['duration'], next_track_id=next_track['id'], type='track')
             if hasattr(engine, 'timeline_callback'):
                 engine.pending_track = metadata
             worker.write_state(dict(id=track['id'],title=track['title'],artist=track['artist'],genre_slug='private-test'),
@@ -290,7 +293,26 @@ def play_loop(root, worker, *, seconds, engine=None):
             conn.execute('UPDATE private_plays SET ended_at=CURRENT_TIMESTAMP WHERE id=?',(current,))
             conn.commit()
             current = None
-            # Future jingle belongs here, without changing schedule.next_track.
+            # The already committed next track survives the station ID unchanged.
+            jingle = jingles.choose() if not worker.STOP else None
+            if jingle is not None:
+                folder = preview_jingles.directory(root)
+                try:
+                    validate_file(folder, jingle['name'], digest=jingle['sha256'], size=jingle['size'])
+                except (OSError, ValueError, MutagenError):
+                    print('[preview] jingle changed/unavailable; continuing to selected track', flush=True)
+                    jingle = None
+            if jingle is not None and not worker.STOP:
+                metadata = dict(id=None, title='Digger Radio', artist='Station ID', type='jingle',
+                                duration=jingle['duration'], next_track_id=next_track['id'],
+                                jingle_name=jingle['name'])
+                if hasattr(engine, 'timeline_callback'):
+                    engine.pending_track = metadata
+                worker.write_state(dict(metadata, genre_slug='station-id'), time.time(),
+                                   jingle['duration'], next_track=next_track)
+                print(f"[preview] jingle={jingle['name']} next_track_id={next_track['id']}", flush=True)
+                if not engine.play(str(folder/jingle['name'])) and not worker.STOP:
+                    raise ValueError('Private jingle decode failed; stopped safely')
             schedule.advance()
     finally:
         timer.cancel()

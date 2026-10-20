@@ -108,6 +108,14 @@ function fixture(native, loggedIn = true) {
     await f.refresh({available: true, track_id: 2, title: 'Next real'});
     assert.equal(f.elements['next-track'].hidden, true);
     assert.equal(f.elements['track-elapsed'].textContent, '--:--', 'legacy metadata has no audible timing');
+    await f.refresh({available:true, track_id:null, type:'jingle', title:'Digger Radio', artist:'Station ID',
+      duration:5.64, timing_available:true, playback_started_at:1339, cover_url:'/static/digger-icon.png',
+      next_track_id:3, next_title:'Third', next_artist:'Artist'});
+    assert.equal(f.elements['np-title'].textContent, 'Digger Radio');
+    assert.equal(f.elements['np-artist'].textContent, '— Station ID');
+    assert.equal(f.elements['next-track'].hidden, false);
+    assert.equal(f.elements['next-title'].textContent, 'Third');
+    assert.equal(f.elements['track-elapsed'].textContent, '00:01');
     if (native) f.audio.listeners.error();
     else f.instances[0].error(null, {fatal: true});
     assert.equal(f.timers.length, 1);

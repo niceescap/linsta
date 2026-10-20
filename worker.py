@@ -62,6 +62,8 @@ def write_state(track=None, started_at=None, duration=0, message=None, *, next_t
         "title": track["title"] if track else None,
         "artist": track["artist"] if track else None,
         "genre": track["genre_slug"] if track else None,
+        "type": track.get("type", "track") if track else None,
+        "jingle_name": track.get("jingle_name") if track else None,
         "started_at": started_at,
         "duration": duration or 0,
         "updated_at": time.time(),

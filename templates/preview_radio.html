@@ -17,6 +17,13 @@
     <button {% if state.status in ('inactive','unavailable') %}disabled{% endif %}>Arrêter PREVIEW</button>
   </form>
 </section>
+<section>
+  <h2>JINGLES</h2>
+  <p>{{ jingles|length }} jingles détectés — station IDs privés, hors catalogue et hors shuffle.</p>
+  <ul>{% for jingle in jingles %}
+    <li>{{ jingle.name }} — {% if jingle.duration %}{{ '%.2f'|format(jingle.duration) }} s{% else %}durée indisponible{% endif %} — <strong>{{ 'valide' if jingle.valid else 'invalide' }}</strong></li>
+  {% else %}<li>Aucun jingle valide disponible : enchaînement direct des morceaux.</li>{% endfor %}</ul>
+</section>
 <h2>{{ tracks|length }} tracks importés</h2>
 {% for track in tracks %}
 <article>

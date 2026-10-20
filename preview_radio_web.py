@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 import re
 import sqlite3
+import preview_jingles
 import subprocess
 import time
 import warnings
@@ -166,7 +167,7 @@ def create_preview_blueprint(login_required, admin_required):
         with catalogue(root()) as conn:
             rows = [dict(row) for row in conn.execute('SELECT * FROM private_tracks ORDER BY position')]
         state = health(root(), controller())
-        return render_template('preview_radio.html', tracks=rows, state=state)
+        return render_template('preview_radio.html', tracks=rows, state=state, jingles=preview_jingles.scan(root()))
 
     @bp.post('/admin/preview-radio/start')
     @admin_required
@@ -231,6 +232,7 @@ def create_preview_blueprint(login_required, admin_required):
         state = health(root(), controller())
         result = {k: state[k] for k in ('status', 'available', 'message')}
         result['track_id'] = None
+        result['type'] = None
         result['timing_available'] = False
         result.update(next_track_id=None, next_title=None, next_artist=None, next_cover_url=None)
         if state['available']:
@@ -253,30 +255,37 @@ def create_preview_blueprint(login_required, admin_required):
                         raise ValueError('Playback timing not yet available')
                     item = audible[-1]
                     data = dict(track_id=item['id'], next_track_id=item['next_track_id'],
-                                started_at=origin + item['offset'])
-                if (isinstance(data, dict) and type(data.get('started_at')) in (int, float)
-                        and math.isfinite(data['started_at'])
-                        and data['started_at'] >= state['started_at']
-                        and type(data.get('track_id')) is int):
+                                started_at=origin + item['offset'], type=item.get('type', 'track'),
+                                duration=item.get('duration'))
+                if (not isinstance(data, dict) or type(data.get('started_at')) not in (int, float)
+                        or not math.isfinite(data['started_at']) or data['started_at'] < state['started_at']):
+                    raise ValueError('Invalid item timing')
+                if data.get('type') == 'jingle' and data.get('track_id') is None:
+                    duration = data.get('duration')
+                    if type(duration) not in (int, float) or not math.isfinite(duration) or not 0 < duration <= 1800:
+                        raise ValueError('Invalid jingle duration')
+                    result.update(type='jingle', title='Digger Radio', artist='Station ID', duration=duration,
+                                  cover_url=url_for('static', filename='digger-icon.png'))
+                elif type(data.get('track_id')) is int:
                     row = track(root(), data['track_id'])
-                    if row['enabled'] and row['removed_at'] is None:
-                        result.update(track_id=row['id'], title=row['title'], artist=row['artist'],
-                            duration=row['duration'], elapsed=max(0, time.time() - data['started_at']),
-                            cover_url=url_for('.cover', track_id=row['id']))
-                        if timing is not None:
-                            result.update(timing_available=True, playback_started_at=data['started_at'],
-                                          elapsed=max(0, at - data['started_at']))
-                        # Only the engine's published selection is accepted. Do
-                        # not reconstruct the queue from DB order in a request.
-                        if type(data.get('next_track_id')) is int:
-                            try:
-                                following = track(root(), data['next_track_id'])
-                                if following['enabled'] and following['removed_at'] is None:
-                                    result.update(next_track_id=following['id'], next_title=following['title'],
-                                        next_artist=following['artist'],
-                                        next_cover_url=url_for('.cover', track_id=following['id']))
-                            except (PreviewError, sqlite3.Error):
-                                pass  # A missing/old next item never invalidates the current track.
+                    if not row['enabled'] or row['removed_at'] is not None:
+                        raise ValueError('Inactive track')
+                    result.update(type='track', track_id=row['id'], title=row['title'], artist=row['artist'],
+                                  duration=row['duration'], cover_url=url_for('.cover', track_id=row['id']))
+                else:
+                    raise ValueError('No playable item')
+                result['elapsed'] = max(0, (at if timing is not None else time.time()) - data['started_at'])
+                if timing is not None:
+                    result.update(timing_available=True, playback_started_at=data['started_at'])
+                if type(data.get('next_track_id')) is int:
+                    try:
+                        following = track(root(), data['next_track_id'])
+                        if following['enabled'] and following['removed_at'] is None:
+                            result.update(next_track_id=following['id'], next_title=following['title'],
+                                          next_artist=following['artist'],
+                                          next_cover_url=url_for('.cover', track_id=following['id']))
+                    except (PreviewError, sqlite3.Error):
+                        pass
             except (OSError, ValueError, TypeError, KeyError, StorageError):
                 pass
         return jsonify(result)

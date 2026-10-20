@@ -77,6 +77,48 @@ class PreviewRoutesTests(unittest.TestCase):
         self.controller.state = 'active'
         return started
 
+    def test_jingle_now_playing_and_audible_transition_keep_next(self):
+        self.session_user(1)
+        started = self.publish()
+        hls = self.root/'hls'
+        raw = dict(track_id=None, title='Digger Radio', artist='Station ID', type='jingle',
+                   duration=5.64, started_at=started+.1, next_track_id=26)
+        (hls/'now.json').write_text(json.dumps(raw))
+        data = self.get('/preview-radio/now-playing').get_json()
+        self.assertEqual(data['type'], 'jingle')
+        self.assertEqual(data['title'], 'Digger Radio')
+        self.assertEqual(data['artist'], 'Station ID')
+        self.assertEqual(data['next_track_id'], 26)
+        self.assertEqual(data['next_title'], 'Track 26')
+        self.assertEqual(data['cover_url'], '/static/digger-icon.png')
+        timing = dict(started_at=started+.01, origin=started+.1, tracks=[
+            dict(id=1, type='track', offset=0, duration=1, next_track_id=26),
+            dict(id=None, type='jingle', offset=.5, duration=.5, next_track_id=26),
+            dict(id=26, type='track', offset=1, duration=2.6, next_track_id=2)])
+        (hls/'timeline.json').write_text(json.dumps(timing))
+        types = []
+        for offset in (.2, .7, 1.2):
+            data = self.get(f'/preview-radio/now-playing?at={started+.1+offset}').get_json()
+            types.append(data['type'])
+            self.assertTrue(data['timing_available'])
+            if offset < 1:
+                self.assertEqual(data['next_track_id'], 26)
+        self.assertEqual(types, ['track','jingle','track'])
+
+    def test_admin_jingle_list_does_not_import_into_catalogue(self):
+        folder = self.root/'jingles/JINGLLE'
+        folder.mkdir(parents=True)
+        (folder/'station.mp3').write_bytes(mp3_bytes())
+        (folder/'invalid.mp3').write_bytes(b'invalid')
+        (folder/'.DS_Store').write_bytes(b'ignore')
+        self.session_user(2)
+        html = self.get('/admin/preview-radio').get_data(as_text=True)
+        self.assertIn('2 jingles détectés', html)
+        self.assertIn('station.mp3', html)
+        self.assertIn('invalide', html)
+        self.assertNotIn('.DS_Store', html)
+        self.assertIn('26 tracks importés', html)
+
     def test_home_player_hierarchy_and_removed_meter_assets(self):
         html = self.get('/').get_data(as_text=True)
         markers = ['PREVIEW / TEST', 'id="np-cover"', 'id="np-title"', 'id="np-artist"',
