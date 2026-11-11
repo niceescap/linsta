@@ -391,6 +391,9 @@ def create_preview_blueprint(login_required, admin_required):
                         pass
             except (OSError, ValueError, TypeError, KeyError, StorageError):
                 pass
+        if current_app.config.get('EDITORIAL_LIVE_DATA'):
+            from dev_live_data import enrich
+            result = enrich(root(), state, result, request.args.get('at'))
         return jsonify(result)
 
     @bp.get('/preview-radio/hls/<name>')

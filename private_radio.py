@@ -270,12 +270,18 @@ document.querySelector('#now').textContent=(d.title||'Waiting')+' - '+(d.artist|
     return PrivateHandler
 
 
-def play_loop(root, worker, *, seconds, engine=None):
+def play_loop(root, worker, *, seconds, engine=None, continuous=False):
     playlist = tracks(root)
     engine = engine or worker.Engine(threads=1, continuous=True)
-    timer = threading.Timer(seconds, lambda:setattr(worker,'STOP',True))
-    timer.start()
+    if continuous:
+        if seconds is not None:
+            raise ValueError('Continuous mode requires seconds=None')
+    elif type(seconds) is not int or not 1 <= seconds <= 3600:
+        raise ValueError('Preview duration must be 1..3600 seconds')
+    timer = None if continuous else threading.Timer(seconds, lambda:setattr(worker,'STOP',True))
     conn = connect(root)
+    if timer is not None:
+        timer.start()
     current = None
     timing_lock = threading.RLock()
     live = {}
@@ -385,7 +391,8 @@ def play_loop(root, worker, *, seconds, engine=None):
             if schedule.current is None:
                 break
     finally:
-        timer.cancel()
+        if timer is not None:
+            timer.cancel()
         engine.stop()
         if current is not None:
             conn.execute('UPDATE private_plays SET ended_at=CURRENT_TIMESTAMP WHERE id=?',(current,))

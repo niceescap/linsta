@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const source = fs.readFileSync(require('node:path').join(__dirname, '../static/js/local-login.js'), 'utf8');
+const source = fs.readFileSync(require('node:path').join(__dirname, process.argv[2] || '../static/js/local-login.js'), 'utf8');
 
 async function test(status) {
   const button = {disabled: false};
@@ -32,7 +32,7 @@ async function test(status) {
   assert.equal(request.options.headers['X-CSRF-Token'], 'fake-csrf');
   assert.deepEqual(JSON.parse(request.options.body), {email: 'test@example.invalid', password: 'fake-test-only'});
   assert.equal(button.disabled, false);
-  if (status === 200) assert.deepEqual(destinations, ['/submissions']);
+  if (status === 200) assert.deepEqual(destinations, [process.argv[3] || '/submissions']);
   else {
     assert.equal(destinations.length, 0);
     assert.match(result.textContent, status === 400 ? /expirée/ : status === 'network' ? /indisponible/ : /refusée/);

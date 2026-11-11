@@ -50,6 +50,15 @@ function fixture(native, loggedIn = true) {
 }
 
 (async () => {
+  const late = fixture(true);
+  await new Promise(setImmediate);
+  late.audio.seekable = {length: 1, start: () => 80, end: () => 104};
+  late.audio.currentTime = 0;
+  late.audio.listeners.loadedmetadata();
+  assert.equal(late.audio.currentTime, 100);
+  late.audio.currentTime = 102;
+  late.audio.listeners.loadedmetadata();
+  assert.equal(late.audio.currentTime, 102);
   for (const native of [true, false]) {
     const anon = fixture(native, false);
     await new Promise(setImmediate);

@@ -4,6 +4,7 @@
 The worker owns only files it creates in storage/hls. A single instance is required.
 """
 import json
+import math
 import os
 import queue
 import select
@@ -130,7 +131,8 @@ def stop_process(proc):
 
 
 class Engine:
-    def __init__(self, *, threads=None, continuous=False):
+    def __init__(self, *, threads=None, continuous=False, gain_resolver=None):
+        self.gain_resolver = gain_resolver  # Explicit DEV opt-in; historical engines keep original audio.
         self.control_callback = None
         self.last_control = 0
         self.timeline_callback = None  # Opt-in private preview timing only.
@@ -314,6 +316,11 @@ class Engine:
             "-re", "-i", path, "-vn", "-sn", "-dn", "-map", "0:a:0",
             "-f", "s16le", "-ac", str(CHANNELS), "-ar", str(RATE), "pipe:1",
         ]
+        if self.gain_resolver is not None:
+            gain = float(self.gain_resolver(path))
+            if not math.isfinite(gain) or not -30 <= gain <= 12:
+                raise PipelineError('gain audio invalide')
+            cmd[cmd.index('-f'):cmd.index('-f')] = ['-af', 'volume='+format(gain,'.4f')+'dB']
         if self.continuous:
             # The PCM pump is the sole clock; the bounded queue supplies backpressure.
             cmd.remove('-re')

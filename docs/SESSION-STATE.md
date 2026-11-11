@@ -1,0 +1,14 @@
+# Reprise — Digger Radio DEV
+- Date : 2026-10-22 UTC ; branche : `feature/volet01-editorial` ; HEAD : `5e7c35e8323b1fabd3e7eddb026d1ba0530ba380`.
+- Changements locaux non committés préservés (fichiers suivis modifiés et nombreux fichiers DEV/UI/tests non suivis) ; aucun commit, push ou déploiement.
+- DEV : web `127.0.0.1:17010`, passerelle `127.0.0.1:17011` ; aucun changement BÊTA, production, réseau entrant ou fichiers musicaux.
+- Catalogue inchangé : 26 MP3 privés actifs, 3 jingles ; moteur/encodeur inchangés. Démo Nico conservée, échéance initiale `2026-10-22 02:58 UTC` ; arrêt via `python3 dev_demo_share.py stop`.
+- Correctif lecteur : pause sans detach/load/remplacement de source ; snapshot audible et compteur figés, reprise même source au direct ; watchdog réarmé et réponses périmées invalidées.
+- Métadonnées : ne pas présenter le bord publié comme le morceau entendu en pause ; « À suivre » peut utiliser la réservation confirmée même si l’horloge est invalide.
+- Compteur basé sur l’horloge audible et le début PCM ; durée réelle affichée si connue ; barre non interactive ; inconnues restent `--:--`.
+- Diagnostic Safari ciblé ajouté : origine native/type/erreur, `currentTime`, date envoyée, HTTP/base/bornes API ; aucun secret exporté.
+- Tests déjà réalisés : API LIVE 26/26 et interface 26/26 ; JS natif simulé lecture/pause/reprise/transitions/compteur/stabilité OK ; syntaxe, diff et permissions OK.
+- Chromium/hls.js réel : 18,616 s ; pause 5,5 s, gel, reprise, navigation, chronologie et durée vérifiés ; une source, aucun détachement.
+- Limite : Mac Safari non validé ; aucune transition complète réellement observée. `getStartDate()` audible peut être absent/rejeté, cause finale à confirmer par export.
+- Documentation diagnostique : `docs/SAFARI-CLOCK-PAUSE.md`.
+- **PROCHAINE ACTION EXACTE** : dans Safari Mac ouvrir `http://127.0.0.1:17010/?radioDiagnostics=1`, faire Cmd-Maj-R, écouter 10 s, exporter l’horloge Safari et transmettre `digger-radio-horloge.json`.

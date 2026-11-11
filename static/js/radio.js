@@ -45,7 +45,20 @@
     playBtn.setAttribute('aria-label', playing ? 'Mettre en pause' : previewMode ? 'Écouter la PREVIEW' : 'Écouter le direct');
   }
 
+  function joinLive() {
+    const ranges = audio.seekable;
+    if (!ranges || !ranges.length) return;
+    const edge = ranges.end(ranges.length - 1);
+    const target = hls && Number.isFinite(hls.liveSyncPosition) ? hls.liveSyncPosition : edge - 4;
+    if (Number.isFinite(target) && target >= ranges.start(ranges.length - 1) &&
+        (!Number.isFinite(audio.currentTime) || edge - audio.currentTime > 12)) {
+      audio.currentTime = target;
+    }
+  }
+  audio.addEventListener('loadedmetadata', joinLive);
+
   async function play() {
+    joinLive();
     try {
       await audio.play();
       message(previewMode ? 'Lecture PREVIEW / TEST.' : 'Lecture du direct.');
@@ -76,7 +89,7 @@
     if (audio.canPlayType('application/vnd.apple.mpegurl')) {
       audio.src = SRC;
     } else if (window.Hls && Hls.isSupported()) {
-      hls = new Hls({ liveSyncDurationCount: 3, lowLatencyMode: false });
+      hls = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 6, lowLatencyMode: false });
       hls.loadSource(SRC);
       hls.attachMedia(audio);
       hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) retry(); });

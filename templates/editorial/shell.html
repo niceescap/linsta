@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#121110"><title>{{ page_title }} — Digger Radio</title>
+<link rel="icon" href="/static/digger-icon.png">
+<link rel="stylesheet" href="/static/editorial/fonts/fonts.css">
+<link rel="stylesheet" href="/static/editorial/editorial.css">
+</head>
+<body data-section="{{ section }}">
+<a class="skip" href="#content">Aller au contenu</a>
+<header class="site-header">
+<a class="wordmark" href="/" data-nav aria-label="Digger Radio, accueil"><img class="brand-icon" src="/static/editorial/digger-logo-transparent.png" alt=""><span>DIGGER <b>RADIO</b><small>MUSIC WORTH FINDING.</small></span></a>
+<button class="menu-toggle" aria-expanded="false" aria-controls="site-nav">Menu ☰</button>
+<nav id="site-nav" aria-label="Navigation principale">
+<a href="/" data-nav>Radio</a><a href="/decouvrir" data-nav>Découvrir</a><a href="/artistes" data-nav>Artistes</a><a href="/a-propos" data-nav>À propos</a>
+</nav>
+{% if not demo_mode %}<a class="pill primary contribute" href="{{ '/submissions' if user else '/connexion/artiste' }}">Proposer un morceau</a>
+<a class="pill session-link" href="{{ '/mon-espace' if user else '/connexion' }}" data-nav>{{ 'Mon espace' if user else 'Connexion' }}</a>{% else %}<span class="pill session-link">Démo privée</span>{% endif %}
+</header>
+<section class="hero" id="hero" aria-label="Accueil et direct" {% if section != 'radio' %}hidden{% endif %}>
+<div class="hero-copy"><h1>MUSIC<br>WORTH<br><em>FINDING.</em></h1><p>Une radio indépendante<br>pour les esprits curieux.</p><p class="universes">SOUL · FUNK · DISCO · BOOGIE<br>JAZZ · HIP-HOP · ELECTRONIC<br>AND BEYOND…</p></div>
+<section class="live-card" aria-label="Lecteur radio LIVE">
+<div class="live-heading"><strong data-live>DIRECT INDISPONIBLE</strong><span>ÉCOUTE PRIVÉE · DEV</span></div>
+<div class="now-grid"><a data-track-link aria-label="Fiche du morceau"><img data-cover src="/static/editorial/digger-logo-transparent.png" alt="Pochette du morceau diffusé"></a><div class="now-info"><p class="eyebrow">LA SÉLECTION DIGGER</p><h2 data-title>En attente du direct</h2><p data-artist>Music worth finding.</p><div class="progress" aria-label="Progression indicative, non interactive"><div data-progress></div></div><div class="times"><span data-elapsed>--:--</span><span data-duration aria-label="Durée totale du morceau">--:--</span></div><div class="commands"><button data-play class="play" {% if not user %}disabled{% endif %} aria-label="Écouter le direct">▶</button><button data-mute aria-label="Couper le son">Son</button><label>Volume<input data-volume aria-label="Volume du direct" type="range" min="0" max="100" value="80"></label></div></div></div>
+<p data-status role="status" aria-live="polite">{{ 'Vérification du flux…' if user else 'Connectez-vous avec un compte de test pour écouter la PREVIEW.' }}</p>
+</section>
+</section>
+<main id="content" tabindex="-1" data-section="{{ section }}">
+{% include 'editorial/content.html' %}
+</main>
+<footer class="site-footer"><span>DIGGER RADIO — MUSIC WORTH FINDING.</span><span>Écoute privée DEV · aucune ouverture publique</span></footer>
+<aside class="mini-player" aria-label="Lecteur radio persistant"><a data-track-link><img data-cover src="/static/editorial/digger-logo-transparent.png" alt="Pochette du direct"></a><div class="mini-meta"><strong data-title>En attente du direct</strong><span data-artist>Digger Radio</span><small data-mini-status>Direct privé</small></div><strong class="mini-live" data-live>INDISPONIBLE</strong><button class="play" data-play {% if not user %}disabled{% endif %} aria-label="Écouter le direct">▶</button><button data-mute aria-label="Couper le son">Son</button></aside>
+{% if user and request.args.get('radioDiagnostics') == '1' %}<details id="radio-diagnostics"><summary>Diagnostic radio DEV</summary><button type="button" class="pill">Exporter le diagnostic</button><button type="button" class="pill" data-export-clock>Exporter l’horloge Safari</button><pre aria-live="off"></pre></details>{% endif %}
+<audio id="editorial-audio" data-enabled="{{ 'true' if user else 'false' }}" preload="none" playsinline></audio>
+<script src="/static/editorial/vendor/hls.min.js"></script>
+<script src="/static/editorial/player.js"></script><script src="/static/editorial/navigation.js"></script>
+{% if section == 'identification' %}<script src="/static/editorial/login.js"></script>{% endif %}
+</body></html>
