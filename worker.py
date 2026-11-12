@@ -4,6 +4,7 @@
 The worker owns only files it creates in storage/hls. A single instance is required.
 """
 import json
+import math
 import os
 import queue
 import select
@@ -56,15 +57,20 @@ def get_next_track(last_genre_slug):
         db.close()
 
 
-def write_state(track=None, started_at=None, duration=0, message=None):
+def write_state(track=None, started_at=None, duration=0, message=None, *, next_track=None):
     state = {
         "track_id": track["id"] if track else None,
         "title": track["title"] if track else None,
         "artist": track["artist"] if track else None,
         "genre": track["genre_slug"] if track else None,
+        "type": track.get("type", "track") if track else None,
+        "jingle_name": track.get("jingle_name") if track else None,
         "started_at": started_at,
         "duration": duration or 0,
         "updated_at": time.time(),
+        "next_track_id": next_track["id"] if next_track else None,
+        "next_title": next_track["title"] if next_track else None,
+        "next_artist": next_track["artist"] if next_track else None,
     }
     if message:
         state["message"] = message
@@ -86,7 +92,7 @@ def clear_hls_dir():
             f.unlink()
 
 
-def start_encoder(*, threads=None):
+def start_encoder(*, threads=None, program_dates=False):
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin",
         "-f", "s16le", "-ar", str(RATE), "-ac", str(CHANNELS),
@@ -97,6 +103,8 @@ def start_encoder(*, threads=None):
         "-hls_list_size", "6", "-hls_flags", "delete_segments+omit_endlist+temp_file",
         "-hls_segment_filename", os.path.join(HLS_PATH, "seg_%09d.ts"), PLAYLIST,
     ]
+    if program_dates:
+        cmd[cmd.index('-hls_flags') + 1] += '+program_date_time'
     if threads is not None:
         cmd[cmd.index('-c:a'):cmd.index('-c:a')] = ['-threads', str(threads)]
         cmd[1:1] = ['-filter_threads', str(threads), '-filter_complex_threads', str(threads)]
@@ -123,7 +131,14 @@ def stop_process(proc):
 
 
 class Engine:
-    def __init__(self, *, threads=None, continuous=False):
+    def __init__(self, *, threads=None, continuous=False, gain_resolver=None):
+        self.gain_resolver = gain_resolver  # Explicit DEV opt-in; historical engines keep original audio.
+        self.control_callback = None
+        self.last_control = 0
+        self.timeline_callback = None  # Opt-in private preview timing only.
+        self.pending_track = None
+        self.pcm_seconds = 0.0
+        self.timeline_origin = None
         self.threads = threads
         self.continuous = continuous
         self.pcm_queue = queue.Queue(maxsize=16)  # <= 3.2 seconds, never unbounded audio.
@@ -137,7 +152,13 @@ class Engine:
         self.started = self.last_progress
 
     def start(self):
-        self.encoder = start_encoder() if self.threads is None else start_encoder(threads=self.threads)
+        self.pcm_seconds = 0.0
+        self.timeline_origin = None
+        self.pending_track = None
+        if self.timeline_callback is not None:
+            self.encoder = start_encoder(threads=self.threads, program_dates=True)
+        else:
+            self.encoder = start_encoder() if self.threads is None else start_encoder(threads=self.threads)
         self.started = self.last_progress = time.monotonic()
         self.segment_stamp = None
         os.set_blocking(self.encoder.stdin.fileno(), False)
@@ -162,6 +183,11 @@ class Engine:
             self.pcm_queue.task_done()
 
     def check(self):
+        if self.control_callback is not None and threading.current_thread() is not self.pump:
+            control_now = time.monotonic()
+            if control_now - self.last_control >= 0.5:
+                self.last_control = control_now
+                self.control_callback()
         if self.pump_error is not None:
             raise PipelineError(str(self.pump_error))
         if self.encoder is None or self.encoder.poll() is not None:
@@ -174,6 +200,13 @@ class Engine:
         try:
             # temp_file makes published segments immutable; inspect the playlist too.
             playlist = Path(PLAYLIST).read_text(encoding="utf-8")
+            if self.timeline_callback is not None and self.timeline_origin is None:
+                from datetime import datetime
+                dates = [line.split(':', 1)[1] for line in playlist.splitlines()
+                         if line.startswith('#EXT-X-PROGRAM-DATE-TIME:')]
+                if dates:
+                    self.timeline_origin = datetime.fromisoformat(dates[0].replace('Z', '+00:00')).timestamp()
+                    self.timeline_callback(None, None, self.timeline_origin)
             segments = [s.strip() for s in playlist.splitlines() if s.strip().endswith(".ts")]
             if segments:
                 last = Path(HLS_PATH, segments[-1])
@@ -193,7 +226,9 @@ class Engine:
             while pcm and not STOP and not self.pump_stop.is_set():
                 self.check()
                 try:
-                    self.pcm_queue.put(pcm, timeout=0.2)
+                    item = (pcm, self.pending_track) if self.pending_track is not None else pcm
+                    self.pcm_queue.put(item, timeout=0.2)
+                    self.pending_track = None
                     return
                 except queue.Full:
                     continue
@@ -246,7 +281,12 @@ class Engine:
                         print('[worker] private PCM unavailable; temporary silence (decoder/I/O wait)', flush=True)
                         warned = True
                 try:
+                    if isinstance(pcm, tuple):
+                        pcm, metadata = pcm
+                        if self.timeline_callback is not None:
+                            self.timeline_callback(self.pcm_seconds, metadata, self.timeline_origin)
                     self._send_pcm(pcm)
+                    self.pcm_seconds += len(pcm)/(RATE*BYTES_PER_FRAME)
                 finally:
                     if queued:
                         self.pcm_queue.task_done()
@@ -276,6 +316,11 @@ class Engine:
             "-re", "-i", path, "-vn", "-sn", "-dn", "-map", "0:a:0",
             "-f", "s16le", "-ac", str(CHANNELS), "-ar", str(RATE), "pipe:1",
         ]
+        if self.gain_resolver is not None:
+            gain = float(self.gain_resolver(path))
+            if not math.isfinite(gain) or not -30 <= gain <= 12:
+                raise PipelineError('gain audio invalide')
+            cmd[cmd.index('-f'):cmd.index('-f')] = ['-af', 'volume='+format(gain,'.4f')+'dB']
         if self.continuous:
             # The PCM pump is the sole clock; the bounded queue supplies backpressure.
             cmd.remove('-re')

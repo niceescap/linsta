@@ -21,6 +21,7 @@ import secrets
 import signal
 import sqlite3
 import stat
+import subprocess
 import sys
 import threading
 import time
@@ -30,6 +31,10 @@ import urllib.error
 
 from audio_storage import checked_open, identity
 from mutagen.mp3 import MP3
+from mutagen import MutagenError
+from preview_schedule import ShuffleCycle
+import preview_jingles
+import preview_editorial
 
 ROOT = Path(__file__).resolve().parent / 'instance/demo/private-radio'
 PORT = 17001
@@ -108,25 +113,39 @@ def initialize(root):
 
 
 def validate_file(root, name, *, digest=None, size=None):
-    if (not isinstance(name,str) or not name.lower().endswith('.mp3')
+    if (not isinstance(name,str) or not name.lower().endswith(('.mp3','.wav'))
             or len(name.encode('utf-8')) > 255 or '/' in name or '\\' in name
             or any(ord(c)<32 or ord(c)==127 for c in name)):
-        raise ValueError('Use a local MP3 basename, never a path, URL or control character')
+        raise ValueError('Use a local MP3/WAV basename, never a path, URL or control character')
     stream, snapshot = checked_open(root,name,sha256=digest,size=size)
     with stream:
         if snapshot[2] > 50*1024*1024 or os.fstat(stream.fileno()).st_nlink != 1:
-            raise ValueError('MP3 must have one link and be at most 50 MiB')
-        info = MP3(stream).info
-        if (info.layer != 3 or info.sketchy or info.channels not in (1,2)
-                or not math.isfinite(info.length) or not 0 < info.length <= 1800):
-            raise ValueError('Invalid or excessive MP3')
+            raise ValueError('Audio file must have one link and be at most 50 MiB')
+        if name.lower().endswith('.mp3'):
+            info = MP3(stream).info
+            duration = float(info.length)
+            if (info.layer != 3 or info.sketchy or info.channels not in (1,2)
+                    or not math.isfinite(duration) or not 0 < duration <= 1800):
+                raise ValueError('Invalid or excessive MP3')
+        else:
+            fd = stream.fileno()
+            result = subprocess.run(['ffprobe','-v','error','-show_entries','format=format_name,duration',
+                '-of','json',f'/proc/self/fd/{fd}'], pass_fds=(fd,), capture_output=True,
+                text=True, timeout=10, check=False, env={'PATH':os.defpath,'LC_ALL':'C'})
+            if result.returncode:
+                raise ValueError('Invalid WAV audio')
+            data = json.loads(result.stdout)['format']
+            duration = float(data['duration'])
+            if ('wav' not in data.get('format_name','').split(',') or not math.isfinite(duration)
+                    or not 0 < duration <= 1800):
+                raise ValueError('Invalid or excessive WAV')
         stream.seek(0)
         sha = hashlib.sha256()
         for chunk in iter(lambda:stream.read(65536),b''):
             sha.update(chunk)
         if identity(os.fstat(stream.fileno())) != snapshot:
-            raise ValueError('MP3 changed during validation')
-        return sha.hexdigest(), snapshot[2], float(info.length)
+            raise ValueError('Audio changed during validation')
+        return sha.hexdigest(), snapshot[2], duration
 
 
 def import_playlist(root, manifest, *, confirmed=False):
@@ -163,6 +182,8 @@ def tracks(root):
     try:
         columns = {row['name'] for row in conn.execute('PRAGMA table_info(private_tracks)')}
         selection = ' AND enabled=1 AND removed_at IS NULL' if 'enabled' in columns else ''
+        if 'rejection_reason' in columns:
+            selection += ' AND rejection_reason IS NULL'
         result = [dict(row) for row in conn.execute(
             'SELECT * FROM private_tracks WHERE private_rights_confirmed=1'+selection+' ORDER BY position')]
     finally:
@@ -249,32 +270,129 @@ document.querySelector('#now').textContent=(d.title||'Waiting')+' - '+(d.artist|
     return PrivateHandler
 
 
-def play_loop(root, worker, *, seconds, engine=None):
+def play_loop(root, worker, *, seconds, engine=None, continuous=False):
     playlist = tracks(root)
     engine = engine or worker.Engine(threads=1, continuous=True)
-    timer = threading.Timer(seconds, lambda:setattr(worker,'STOP',True))
-    timer.start()
+    if continuous:
+        if seconds is not None:
+            raise ValueError('Continuous mode requires seconds=None')
+    elif type(seconds) is not int or not 1 <= seconds <= 3600:
+        raise ValueError('Preview duration must be 1..3600 seconds')
+    timer = None if continuous else threading.Timer(seconds, lambda:setattr(worker,'STOP',True))
     conn = connect(root)
+    if timer is not None:
+        timer.start()
     current = None
+    timing_lock = threading.RLock()
+    live = {}
+    timeline = {'started_at': time.time(), 'origin': None, 'tracks': []}
+    def save_timing():
+        temporary = root/'hls/timeline.json.tmp'
+        temporary.write_text(json.dumps(timeline))
+        os.replace(temporary, root/'hls/timeline.json')
+    def publish_timing(offset, metadata, origin):
+        with timing_lock:
+            if origin is not None:
+                timeline['origin'] = origin
+            if metadata is not None:
+                timeline['tracks'].append(dict(metadata, offset=offset))
+                timeline['tracks'] = timeline['tracks'][-128:]
+            save_timing()
+    def state_signature(metadata, duration, following):
+        return json.dumps([metadata,duration,following],sort_keys=True)
+    def publish_item(metadata, duration, following):
+        live.update(metadata=metadata, duration=duration, started_at=time.time(), following=following,
+                    signature=state_signature(metadata,duration,following))
+        if hasattr(engine, 'timeline_callback'):
+            engine.pending_track = metadata
+        worker.write_state(dict(metadata, genre_slug='station-id' if metadata.get('type')=='jingle' else 'private-test'),
+                           live['started_at'], duration, next_track=following)
+    def refresh_schedule():
+        rows = [r for r in preview_editorial.listing(root) if preview_editorial.eligible(r)]
+        with timing_lock:
+            previous = schedule.next_track
+            schedule.refresh(rows)
+            following = schedule.next_track
+            if live:
+                item = live['metadata']
+                # Preserve identity/audio of the current item even if just withdrawn.
+                updated = next((r for r in rows if r['id']==item['id']), None)
+                if updated:
+                    item.update(title=updated['title'], artist=updated['artist'])
+                item['next_track_id'] = following['id'] if following else None
+                previous_id = previous['id'] if previous else None
+                if previous_id != item['next_track_id']:
+                    recent = timeline['tracks'][-2:] if item.get('type')=='jingle' else timeline['tracks'][-1:]
+                    for entry in recent:
+                        if entry['next_track_id']==previous_id:
+                            entry['next_track_id']=item['next_track_id']
+                    save_timing()
+                signature = state_signature(item,live['duration'],following)
+                if signature != live['signature']:
+                    worker.write_state(dict(item,genre_slug='station-id' if item.get('type')=='jingle' else 'private-test'),
+                                       live['started_at'],live['duration'],next_track=following)
+                    live['signature'] = signature
+                live['following'] = following
+    if hasattr(engine, 'timeline_callback'):
+        engine.timeline_callback = publish_timing
     try:
         worker.clear_hls_dir()
+        publish_timing(None, None, None)
         engine.start()
+        schedule = ShuffleCycle(playlist)
+        jingles = preview_jingles.JinglePicker(preview_jingles.scan(root))
+        if hasattr(engine, 'control_callback'):
+            engine.control_callback = refresh_schedule
         while not worker.STOP:
-            for track in playlist:
-                if worker.STOP:
+            refresh_schedule()
+            track, next_track = schedule.current, schedule.next_track
+            # Recheck before decoding; never select an ineligible reservation.
+            if not any(r['id']==track['id'] and preview_editorial.eligible(r)
+                       for r in preview_editorial.listing(root)):
+                schedule.advance()
+                if schedule.current is None:
                     break
-                validate_file(root,track['filename'],digest=track['sha256'],size=track['size'])
-                current = conn.execute('INSERT INTO private_plays(track_id) VALUES (?)',(track['id'],)).lastrowid
-                conn.commit()
-                worker.write_state(dict(id=track['id'],title=track['title'],artist=track['artist'],genre_slug='private-test'),
-                                   time.time(),track['duration'])
-                if not engine.play(str(root/track['filename'])) and not worker.STOP:
-                    raise ValueError('Private track decode failed; stopped instead of silently approving other media')
-                conn.execute('UPDATE private_plays SET ended_at=CURRENT_TIMESTAMP WHERE id=?',(current,))
-                conn.commit()
-                current = None
+                continue
+            validate_file(root,track['filename'],digest=track['sha256'],size=track['size'])
+            current = conn.execute('INSERT INTO private_plays(track_id) VALUES (?)',(track['id'],)).lastrowid
+            conn.commit()
+            metadata = dict(id=track['id'],title=track['title'],artist=track['artist'],
+                            duration=track['duration'], next_track_id=next_track['id'] if next_track else None, type='track')
+            publish_item(metadata, track['duration'], next_track)
+            if not engine.play(str(root/track['filename'])) and not worker.STOP:
+                raise ValueError('Private track decode failed; stopped instead of silently approving other media')
+            conn.execute('UPDATE private_plays SET ended_at=CURRENT_TIMESTAMP WHERE id=?',(current,))
+            conn.commit()
+            current = None
+            refresh_schedule()
+            next_track = schedule.next_track
+            if next_track is None or worker.STOP:
+                break
+            # The valid committed next track survives the station ID unchanged.
+            jingle = jingles.choose()
+            if jingle is not None:
+                folder = preview_jingles.directory(root)
+                try:
+                    validate_file(folder, jingle['name'], digest=jingle['sha256'], size=jingle['size'])
+                except (OSError, ValueError, MutagenError):
+                    print('[preview] jingle changed/unavailable; continuing to selected track', flush=True)
+                    jingle = None
+            if jingle is not None and not worker.STOP:
+                metadata = dict(id=None, title='Digger Radio', artist='Station ID', type='jingle',
+                                duration=jingle['duration'], next_track_id=next_track['id'],
+                                jingle_name=jingle['name'])
+                publish_item(metadata, jingle['duration'], next_track)
+                print(f"[preview] jingle={jingle['name']} next_track_id={next_track['id']}", flush=True)
+                if not engine.play(str(folder/jingle['name'])) and not worker.STOP:
+                    raise ValueError('Private jingle decode failed; stopped safely')
+            refresh_schedule()
+            schedule.advance()
+            live.clear()
+            if schedule.current is None:
+                break
     finally:
-        timer.cancel()
+        if timer is not None:
+            timer.cancel()
         engine.stop()
         if current is not None:
             conn.execute('UPDATE private_plays SET ended_at=CURRENT_TIMESTAMP WHERE id=?',(current,))

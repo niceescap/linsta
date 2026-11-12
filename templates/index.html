@@ -20,25 +20,37 @@
     </header>
 
     <section class="player-card">
+      <div class="preview-heading"><div class="live"><span class="live-dot"></span>{{ 'PREVIEW / TEST' if preview_radio_enabled|default(false) else 'LIVE' }}</div></div>
       <img id="np-cover" class="cover" src="/static/digger-icon.png" alt="Cover">
       <div class="meta">
-        <div class="live"><span class="live-dot"></span>LIVE</div>
         <h1 id="np-title" class="title">Chargement du flux…</h1>
         <div id="np-artist" class="artist">—</div>
         <div class="badge">SELECTED BY DIGGER</div>
-        <p id="player-status" class="muted" role="status" aria-live="polite">Appuyez sur lecture pour écouter.</p>
+        <p id="player-status" class="muted" role="status" aria-live="polite">{% if preview_radio_enabled|default(false) and not user %}Connectez-vous avec un compte de test pour écouter la PREVIEW.{% else %}Appuyez sur lecture pour écouter.{% endif %}</p>
       </div>
       <div class="progress">
         <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
       </div>
+      <div class="track-times">
+        <div><span id="track-elapsed">--:--</span><small>écoulé</small></div>
+        <div><span id="track-duration">--:--</span><small>total</small></div>
+        <div><span id="track-remaining">--:--</span><small>restant</small></div>
+      </div>
+      {% if preview_radio_enabled|default(false) %}
+      <div id="next-track" class="next-track" hidden>
+        <div class="next-label">À SUIVRE</div>
+        <div class="next-details"><img id="next-cover" src="/static/digger-icon.png" alt="Pochette du prochain morceau"><div><strong id="next-title"></strong><div id="next-artist" class="muted"></div></div></div>
+      </div>
+      {% endif %}
       <div class="controls">
-        <button id="playBtn" class="play-btn" type="button" aria-label="Écouter le direct" aria-pressed="false">▶</button>
+        <button id="playBtn" class="play-btn" type="button" aria-label="Écouter le direct" aria-pressed="false" {% if not radio_enabled|default(true) %}disabled{% endif %}>▶</button>
       </div>
       <div class="volume">
         <label for="volumeInput">Volume</label>
         <input id="volumeInput" type="range" min="0" max="100" value="80">
       </div>
-      <audio id="player" data-stream-url="/hls/stream.m3u8" preload="none" playsinline style="display:none"></audio>
+      <audio id="player" data-stream-url="{{ radio_stream_url|default('/hls/stream.m3u8') }}" data-metadata-url="{{ radio_metadata_url|default('/now-playing') }}" data-preview="{{ 'true' if preview_radio_enabled|default(false) else 'false' }}" data-live-enabled="{{ 'true' if radio_enabled|default(true) else 'false' }}" preload="none" playsinline style="display:none"></audio>
+      {% if preview_radio_enabled|default(false) %}<p class="muted">Écoute privée PREVIEW / TEST — aucune approbation de diffusion publique.</p>{% endif %}
     </section>
 
     <section class="card" style="margin-top:24px;background:var(--bg-soft);border:1px solid var(--border);padding:20px;border-radius:12px">
@@ -69,7 +81,12 @@
       {% else %}
         <h2>Rejoindre Digger</h2>
         <p>Artiste ou créateur ? Connectez-vous pour proposer votre musique.</p>
+        {% if local_login_enabled|default(false) %}
+        <a class="btn" href="{{ url_for('local_login') }}">Se connecter avec un compte de test</a>
+        {% endif %}
+        {% if google_oauth_enabled|default(true) %}
         <a class="btn" href="/login/google">Se connecter avec Google</a>
+        {% endif %}
       {% endif %}
     </section>
   </main>

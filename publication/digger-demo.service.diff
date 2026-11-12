@@ -1,0 +1,5 @@
+--- /home/jean/.config/systemd/user/digger-demo.service
++++ /home/jean/.config/systemd/user/digger-demo.service
+@@ -9 +9 @@
+-WorkingDirectory=/home/jean/digger/instance/releases/digger-web
++WorkingDirectory=/home/jean/digger/instance/releases/digger-preview

@@ -1,0 +1,26 @@
+# Prepared only. Start explicitly from the authenticated Digger admin.
+[Unit]
+Description=Digger private PREVIEW radio (bounded test, no public listener)
+
+[Service]
+Type=exec
+WorkingDirectory=/home/jean/digger/instance/releases/digger-manual-add
+Environment=PYTHONDONTWRITEBYTECODE=1
+UnsetEnvironment=GUNICORN_CMD_ARGS PYTHONPATH PYTHONHOME FLASK_APP FLASK_DEBUG
+ExecStart=/home/jean/digger/instance/demo/venv/bin/python -B -m preview_radio_runner --root /home/jean/digger/instance/demo/private-radio --seconds 3600
+Restart=no
+RuntimeMaxSec=3600
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=yes
+Nice=10
+LimitNOFILE=128
+MemoryHigh=512M
+MemoryMax=768M
+CPUQuota=50%
+TasksMax=24
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=digger-preview-radio

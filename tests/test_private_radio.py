@@ -210,6 +210,29 @@ class PrivateRadioTests(unittest.TestCase):
                 else:
                     with self.assertRaises(ValueError): radio.probe(self.root,progress_timeout=0)
 
+    def test_single_item_queue_publishes_itself_then_clears_on_stop(self):
+        self.imported()
+        with sqlite3.connect(self.root/'catalogue.sqlite') as conn:
+            conn.execute('DELETE FROM private_tracks WHERE id=2')
+        worker = radio.load_worker(self.root)
+        worker.STOP = False
+        published = []
+        original = worker.write_state
+        def record(*args, **kwargs):
+            original(*args, **kwargs)
+            published.append(json.loads((self.root/'hls/now.json').read_text()))
+        worker.write_state = record
+        class Once:
+            def start(self): pass
+            def play(self, path):
+                worker.STOP = True
+                return True
+            def stop(self): pass
+        radio.play_loop(self.root, worker, seconds=5, engine=Once())
+        self.assertEqual(published[0]['track_id'], 1)
+        self.assertEqual(published[0]['next_track_id'], 1)
+        self.assertIsNone(published[-1]['next_track_id'])
+
     def test_real_engine_loops_synthetic_audio_and_produces_decodable_hls(self):
         self._real_engine_loop()
 
@@ -222,10 +245,12 @@ class PrivateRadioTests(unittest.TestCase):
         if continuous:
             worker.HEALTH_TIMEOUT = 6  # Transition wait below exceeds this; production stays 20.
         metadata = []
+        following = []
         original_write = worker.write_state
         def record(track=None, *args, **kwargs):
             if track:
                 metadata.append(track['title'])
+                following.append(kwargs['next_track']['id'])
             return original_write(track,*args,**kwargs)
         worker.write_state = record
         class ThreeTracks(worker.Engine):
@@ -250,8 +275,19 @@ class PrivateRadioTests(unittest.TestCase):
         with sqlite3.connect(self.root/'catalogue.sqlite') as conn:
             played = conn.execute('SELECT track_id,ended_at FROM private_plays ORDER BY id').fetchall()
         self.assertGreaterEqual(len(played),3)
-        self.assertEqual([p[0] for p in played[:3]],[1,2,1])
-        self.assertEqual(metadata[:3],['Synthetic one','Synthetic two','Synthetic one'])
+        ids = [p[0] for p in played[:3]]
+        self.assertEqual(set(ids[:2]), {1, 2})
+        self.assertEqual(ids[0], ids[2])
+        self.assertEqual(following[:2], ids[1:3])
+        self.assertNotEqual(following[2], ids[2])
+        self.assertIsNone(json.loads((self.root/'hls/now.json').read_text())['next_track_id'])
+        self.assertEqual(metadata[:3], [('Synthetic one' if i == 1 else 'Synthetic two') for i in ids])
+        timing = json.loads((self.root/'hls/timeline.json').read_text())
+        if continuous:
+            self.assertIsInstance(timing['origin'], float)
+            self.assertEqual([item['id'] for item in timing['tracks'][:3]], ids)
+            self.assertLess(timing['tracks'][0]['offset'], timing['tracks'][1]['offset'])
+            self.assertIn('#EXT-X-PROGRAM-DATE-TIME:', (self.root/'hls/stream.m3u8').read_text())
         self.assertTrue(all(p[1] for p in played))
         playlist = (self.root/'hls/stream.m3u8').read_text()
         segments = [line for line in playlist.splitlines() if radio.SEGMENT.fullmatch(line)]

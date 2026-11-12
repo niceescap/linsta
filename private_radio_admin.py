@@ -23,7 +23,7 @@ def migrate(root):
     conn = radio.connect(root)
     try:
         version = conn.execute('PRAGMA user_version').fetchone()[0]
-        if version == 1:
+        if version in (1, 2, 3):
             return
         if version != 0:
             raise ValueError('Version de catalogue inconnue.')
